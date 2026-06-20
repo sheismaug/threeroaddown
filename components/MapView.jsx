@@ -319,9 +319,13 @@ function PlaceInput({ value, onChange, onPick, onEnter, placeholder }) {
   const tRef = useRef(null);
   function handle(v) {
     onChange(v);
+    const ss = (v || "").trim().toLowerCase();
     if (tRef.current) clearTimeout(tRef.current);
-    if (!v || v.trim().length < 2) { setSugs([]); setOpen(false); return; }
-    tRef.current = setTimeout(async () => { const r = await suggestPlaces(v); setSugs(r); setOpen(r.length > 0); }, 320);
+    if (!v || ss.length < 2) { setSugs([]); setOpen(false); return; }
+    // โชว์สถานที่ยอดนิยมในเครื่องทันที (ไม่รอเน็ต) แล้วค่อยเติมผลจาก OSM
+    const local = LANDMARKS.filter((lm) => lm.aliases.some((a) => { const al = a.toLowerCase(); return al.includes(ss) || ss.includes(al); })).map((lm) => ({ name: lm.name, coord: lm.coord, src: "landmark" }));
+    if (local.length) { setSugs(local); setOpen(true); }
+    tRef.current = setTimeout(async () => { const r = await suggestPlaces(v); if (r.length) { setSugs(r); setOpen(true); } }, 250);
   }
   const istyle = { width: "100%", boxSizing: "border-box", padding: "9px 11px", borderRadius: 9, border: "1px solid #ccc", fontSize: 14, outline: "none" };
   return (
@@ -586,8 +590,8 @@ export default function MapView({ apiRef }) {
       <style>{`
         .wb-card{position:absolute;background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:system-ui;z-index:1000;}
         .wb-info{top:12px;left:12px;max-width:280px;padding:10px 14px;}
-        .wb-route{top:12px;right:12px;width:300px;padding:10px 14px;z-index:1300;}
-        body.wb-chatopen .wb-route{display:none;}
+        .wb-route{top:12px;right:12px;width:300px;padding:10px 14px;z-index:1300;max-height:calc(100vh - 24px);overflow:auto;}
+        body.wb-chatopen .wb-route{max-height:44vh;}
         .wb-legend{bottom:16px;left:12px;padding:8px 12px;font-size:12px;column-count:2;column-gap:14px;}
         .wb-nav{top:0;left:0;right:0;border-radius:0;background:#1d6fb8;color:#fff;padding:12px 16px;z-index:1600;}
         .wb-startbtn{display:block;width:100%;margin-top:8px;padding:10px;border:none;border-radius:8px;background:#1d6fb8;color:#fff;font-weight:800;font-size:15px;cursor:pointer;}
