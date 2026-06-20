@@ -291,10 +291,60 @@ function queuedGeocode(query) {
   return pr;
 }
 
+// แนะนำสถานที่แบบสด: รวมแลนด์มาร์กในเครื่อง + ค้นจาก OSM (Nominatim) ตามที่พิมพ์
+async function suggestPlaces(q) {
+  const s = (q || "").trim().toLowerCase();
+  const out = [];
+  for (const lm of LANDMARKS) {
+    if (lm.aliases.some((a) => { const al = a.toLowerCase(); return al.includes(s) || s.includes(al); })) {
+      if (!out.some((o) => o.name === lm.name)) out.push({ name: lm.name, coord: lm.coord, src: "landmark" });
+    }
+  }
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=6&accept-language=th&countrycodes=th&viewbox=100.45,13.95,100.75,13.55&bounded=1&q=${encodeURIComponent(q)}`;
+    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    if (r.ok) {
+      const j = await r.json();
+      for (const it of j) {
+        const name = (it.display_name || "").split(",").slice(0, 2).join(", ").trim();
+        if (name && !out.some((o) => o.name === name)) out.push({ name, coord: [parseFloat(it.lon), parseFloat(it.lat)], src: "osm" });
+      }
+    }
+  } catch (e) {}
+  return out.slice(0, 8);
+}
+function PlaceInput({ value, onChange, onPick, onEnter, placeholder }) {
+  const [sugs, setSugs] = useState([]);
+  const [open, setOpen] = useState(false);
+  const tRef = useRef(null);
+  function handle(v) {
+    onChange(v);
+    if (tRef.current) clearTimeout(tRef.current);
+    if (!v || v.trim().length < 2) { setSugs([]); setOpen(false); return; }
+    tRef.current = setTimeout(async () => { const r = await suggestPlaces(v); setSugs(r); setOpen(r.length > 0); }, 320);
+  }
+  const istyle = { width: "100%", boxSizing: "border-box", padding: "9px 11px", borderRadius: 9, border: "1px solid #ccc", fontSize: 14, outline: "none" };
+  return (
+    <div style={{ position: "relative" }}>
+      <input value={value} onChange={(e) => handle(e.target.value)} onFocus={() => { if (sugs.length) setOpen(true); }} onBlur={() => setTimeout(() => setOpen(false), 160)}
+        onKeyDown={(e) => { if (e.key === "Enter") { setOpen(false); onEnter && onEnter(); } }} placeholder={placeholder} style={istyle} />
+      {open ? (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#fff", border: "1px solid #ddd", borderRadius: 9, boxShadow: "0 4px 14px rgba(0,0,0,.18)", zIndex: 1400, maxHeight: 240, overflowY: "auto", marginTop: 2 }}>
+          {sugs.map((sg, i) => (
+            <div key={i} onMouseDown={() => { onPick(sg.name, sg.coord); setOpen(false); }}
+              style={{ padding: "9px 11px", fontSize: 14, cursor: "pointer", borderBottom: "1px solid #f0f0f0", display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <span>{sg.name}</span><span style={{ fontSize: 11, color: "#aaa" }}>{sg.src === "landmark" ? "⭐ ที่นิยม" : "OSM"}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 export default function MapView({ apiRef }) {
   const mapEl = useRef(null);
   const mapRef = useRef(null);
-  const ctx = useRef({ L: null, routeLayer: null, problems: [], osmPromise: null, select: () => {}, scored: null, voiceOn: true, voiceLang: "th", crossings: [] });
+  const ctx = useRef({ L: null, routeLayer: null, problems: [], osmPromise: null, select: () => {}, scored: null, voiceOn: true, voiceLang: "th", crossings: [], placeCache: {} });
   const [info, setInfo] = useState({ count: 0, source: "", loading: true });
   const [toilets, setToilets] = useState(null);
   const [cams, setCams] = useState(null);
@@ -377,7 +427,7 @@ export default function MapView({ apiRef }) {
         if (c.routeKey === key && c.scored) { c.select(c.best); return c.scored; }
         c.routeLayer.clearLayers(); setRouteData({ loading: true });
         let sName = "สยาม (BTS)", eName = "รพ.จุฬาฯ", sCoord = null, eCoord = null, note = null;
-        const resolve = async (x) => (x ? (resolvePlace(x) || (await geocodeNominatim(x))) : null);
+        const resolve = async (x) => { if (!x) return null; const pc = c.placeCache && c.placeCache[x]; if (pc) return pc; return resolvePlace(x) || (await geocodeNominatim(x)); };
         const [gFrom, gTo] = await Promise.all([resolve(from), resolve(to)]);
         if (from) { if (gFrom) { sCoord = gFrom.coord; sName = gFrom.name; } else note = `หา "${from}" ไม่เจอ (ใช้สยามแทน) — ลองพิมพ์ชื่อให้ชัดขึ้น เช่น สนามกีฬาแห่งชาติ`; }
         if (to) { if (gTo) { eCoord = gTo.coord; eName = gTo.name; } else note = (note ? note + " · " : "") + `หา "${to}" ไม่เจอ (ใช้ รพ.จุฬาฯ แทน)`; }
@@ -536,6 +586,7 @@ export default function MapView({ apiRef }) {
         .wb-card{position:absolute;background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:system-ui;z-index:1000;}
         .wb-info{top:12px;left:12px;max-width:280px;padding:10px 14px;}
         .wb-route{top:12px;right:12px;width:300px;padding:10px 14px;z-index:1300;}
+        body.wb-chatopen .wb-route{display:none;}
         .wb-legend{bottom:16px;left:12px;padding:8px 12px;font-size:12px;column-count:2;column-gap:14px;}
         .wb-nav{top:0;left:0;right:0;border-radius:0;background:#1d6fb8;color:#fff;padding:12px 16px;z-index:1600;}
         .wb-startbtn{display:block;width:100%;margin-top:8px;padding:10px;border:none;border-radius:8px;background:#1d6fb8;color:#fff;font-weight:800;font-size:15px;cursor:pointer;}
@@ -588,9 +639,9 @@ export default function MapView({ apiRef }) {
       {!nav?.active ? (
       <div className="wb-card wb-search">
         <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>🔍 ค้นหาเส้นทางเดิน</div>
-        <input list="wb-places" value={sFrom} onChange={(e) => setSFrom(e.target.value)} placeholder="จาก (เช่น สนามกีฬาแห่งชาติ)" style={{ width: "100%", boxSizing: "border-box", padding: "9px 11px", borderRadius: 9, border: "1px solid #ccc", fontSize: 14, outline: "none" }} />
-        <input list="wb-places" value={sTo} onChange={(e) => setSTo(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") doSearch(); }} placeholder="ไป (เช่น รพ.จุฬาฯ)" style={{ width: "100%", boxSizing: "border-box", padding: "9px 11px", borderRadius: 9, border: "1px solid #ccc", fontSize: 14, outline: "none", marginTop: 6 }} />
-        <datalist id="wb-places">{LANDMARKS.map((l) => <option key={l.name} value={l.name} />)}</datalist>
+        <PlaceInput value={sFrom} onChange={setSFrom} onEnter={doSearch} onPick={(name, coord) => { setSFrom(name); ctx.current.placeCache[name] = { coord, name }; }} placeholder="จาก (เช่น สนามกีฬาแห่งชาติ)" />
+        <div style={{ height: 6 }} />
+        <PlaceInput value={sTo} onChange={setSTo} onEnter={doSearch} onPick={(name, coord) => { setSTo(name); ctx.current.placeCache[name] = { coord, name }; }} placeholder="ไป (เช่น รพ.จุฬาฯ)" />
         <button onClick={doSearch} style={{ width: "100%", marginTop: 8, padding: "9px", border: "none", borderRadius: 9, background: "#2a9d54", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>ค้นหาเส้นทาง</button>
       </div>
       ) : null}
