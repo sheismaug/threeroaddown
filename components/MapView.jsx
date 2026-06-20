@@ -105,6 +105,21 @@ function turnAt(coords, wp) {
   if (ad > 50) return "เลี้ยว" + side;
   return "เบี่ยง" + side;
 }
+// ทิศเลี้ยวโดยอ้างอิง "ทิศที่ผู้ใช้กำลังมุ่งหน้าจริง" (จากตำแหน่ง -> จุดเลี้ยว) แม่นกว่า geometry ที่สั่น
+function turnSide(coords, wp, fromPt) {
+  if (wp <= 0 || wp >= coords.length - 1) return null;
+  const after = walkFrom(coords, wp, 16, 1);
+  const bOut = bearing(coords[wp], after);
+  const bIn = haversine(fromPt, coords[wp]) > 20 ? bearing(fromPt, coords[wp]) : bearing(walkFrom(coords, wp, 16, -1), coords[wp]);
+  const d = ((bOut - bIn + 540) % 360) - 180;
+  const ad = Math.abs(d);
+  if (ad < 22) return "ตรงไป";
+  const side = d > 0 ? "ขวา" : "ซ้าย";
+  if (ad > 150) return "กลับตัว";
+  if (ad > 115) return "เลี้ยว" + side + "หักศอก";
+  if (ad > 50) return "เลี้ยว" + side;
+  return "เบี่ยง" + side;
+}
 function sampleLine(coords, stepM = 25) {
   const out = []; let carry = 0;
   for (let i = 0; i < coords.length - 1; i++) {
@@ -378,7 +393,7 @@ export default function MapView({ apiRef }) {
     for (let j = k + 1; j < n.steps.length; j++) {
       const wp = n.steps[j].wpStart;
       const tt = turnAt(n.coords, wp);
-      if (tt && tt !== "ตรงไป") { mWp = wp; mTurn = tt; mName = n.steps[j].name || ""; break; }
+      if (tt && tt !== "ตรงไป") { mWp = wp; mName = n.steps[j].name || ""; const ts = turnSide(n.coords, wp, u); mTurn = (ts && ts !== "ตรงไป") ? ts : tt; break; }
     }
     const distTurn = mWp != null ? Math.max(0, Math.round(n.cum[mWp] - n.cum[idx])) : distDest;
     const nameEN = roadEN(mName);
