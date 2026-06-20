@@ -36,6 +36,15 @@ function speak(text, lang) {
 }
 function speakNow(text, lang) { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {} speak(text, lang); }
 const TURN_EN = { "เลี้ยวซ้าย": "turn left", "เลี้ยวขวา": "turn right", "เบี่ยงซ้าย": "keep left", "เบี่ยงขวา": "keep right", "เลี้ยวซ้ายหักศอก": "sharp left turn", "เลี้ยวขวาหักศอก": "sharp right turn", "ตรงไป": "go straight", "กลับตัว": "make a U-turn" };
+const ROAD_EN = {
+  "อังรีดูนังต์": "Henri Dunant Road", "พระรามที่ 1": "Rama I Road", "พระราม 1": "Rama I Road",
+  "พระรามที่ 4": "Rama IV Road", "พระราม 4": "Rama IV Road", "พระรามที่ 6": "Rama VI Road", "พระราม 6": "Rama VI Road",
+  "พญาไท": "Phaya Thai Road", "ราชดำริ": "Ratchadamri Road", "เพชรบุรี": "Phetchaburi Road",
+  "สุขุมวิท": "Sukhumvit Road", "สีลม": "Silom Road", "สาทร": "Sathon Road", "ศรีอยุธยา": "Si Ayutthaya Road",
+  "ราชปรารภ": "Ratchaprarop Road", "เพลินจิต": "Phloen Chit Road", "วิทยุ": "Witthayu Road",
+  "จุฬาลงกรณ์": "Chulalongkorn", "พระราม 3": "Rama III Road", "นราธิวาส": "Narathiwat Road",
+};
+function roadEN(th) { if (!th) return ""; if (ROAD_EN[th]) return ROAD_EN[th]; const k = Object.keys(ROAD_EN).find((x) => th.includes(x)); return k ? ROAD_EN[k] : ""; }
 
 function loadLeaflet() {
   return new Promise((resolve, reject) => {
@@ -355,6 +364,11 @@ export default function MapView({ apiRef }) {
     const c = ctx.current, n = c.nav; if (!n) return;
     const lang = c.voiceLang || "th";
     c.userMarker?.setLatLng([u[1], u[0]]);
+    if (c.prevPos && c.userMarker && c.L && haversine(c.prevPos, u) > 1.5) {
+      const hd = bearing(c.prevPos, u);
+      c.userMarker.setIcon(c.L.divIcon({ className: "", html: `<div style="width:24px;height:24px;line-height:24px;text-align:center;font-size:22px;color:#1d6fb8;transform:rotate(${hd}deg)">\u25B2</div>`, iconSize: [24, 24], iconAnchor: [12, 12] }));
+    }
+    c.prevPos = u;
     if (mapRef.current) mapRef.current.setView([u[1], u[0]], Math.max(mapRef.current.getZoom(), 17), { animate: true });
     let idx = 0, bd = Infinity;
     for (let i = 0; i < n.coords.length; i++) { const d = haversine(u, n.coords[i]); if (d < bd) { bd = d; idx = i; } }
@@ -367,8 +381,9 @@ export default function MapView({ apiRef }) {
       if (tt && tt !== "ตรงไป") { mWp = wp; mTurn = tt; mName = n.steps[j].name || ""; break; }
     }
     const distTurn = mWp != null ? Math.max(0, Math.round(n.cum[mWp] - n.cum[idx])) : distDest;
+    const nameEN = roadEN(mName);
     const instr = lang === "en"
-      ? (TURN_EN[mTurn] || "continue to destination") + (mName ? " onto " + mName : "")
+      ? (TURN_EN[mTurn] || "continue to the destination") + (nameEN ? " onto " + nameEN : "")
       : (mTurn || "ตรงไปยังปลายทาง") + (mName ? ` เข้า ${mName}` : "");
     let crossAhead = null, cbest = Infinity;
     for (const cp of c.crossings || []) {
@@ -400,8 +415,10 @@ export default function MapView({ apiRef }) {
         c.spokenTurns.add(mWp);
         const m = rnd(distTurn);
         if (distTurn <= 12) speakNow(instr, lang);
-        else speakNow(en ? `In ${m} meters, ${TURN_EN[mTurn] || "continue"}${mName ? " onto " + mName : ""}` : `ในอีก ${m} เมตร ${instr}`, lang);
+        else speakNow(en ? `In ${m} meters, ${TURN_EN[mTurn] || "continue"}${nameEN ? " onto " + nameEN : ""}` : `ในอีก ${m} เมตร ${instr}`, lang);
       }
+      if ((mWp == null || distTurn > 90) && distDest > 40 && !c.straightSpoken) { c.straightSpoken = true; speakNow(en ? "Continue straight" : "เดินตรงไป", lang); }
+      if (mWp != null && distTurn < 60) c.straightSpoken = false;
       if (hazard && hazard.dist < 50 && !c.spokenHaz.has(hid)) { c.spokenHaz.add(hid); speak(en ? "Caution, obstacle ahead" : `ระวัง ${hazard.label} ข้างหน้า`, lang); }
       if (arrived && !c.spokenArrived) { c.spokenArrived = true; speak(en ? "You have arrived" : "ถึงปลายทางแล้ว", lang); }
     }
@@ -413,7 +430,7 @@ export default function MapView({ apiRef }) {
     const coords = r.coordinates; const cum = [0];
     for (let k = 1; k < coords.length; k++) cum[k] = cum[k - 1] + haversine(coords[k - 1], coords[k]);
     c.nav = { coords, cum, steps: r.steps || [] };
-    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenCross = new Set(); c.spokenArrived = false;
+    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenCross = new Set(); c.spokenArrived = false; c.prevPos = null; c.straightSpoken = false;
     if (!c.userMarker) c.userMarker = L.marker([coords[0][1], coords[0][0]], { icon: L.divIcon({ className: "", html: '<div style="width:18px;height:18px;border-radius:50%;background:#1d6fb8;border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.6)"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(mapRef.current);
     setNav({ active: true, instr: "กำลังหาตำแหน่ง…", distTurn: null, distDest: Math.round(cum[cum.length - 1]), hazard: null, arrived: false });
     if (!navigator.geolocation) { onErr(); return; }
@@ -425,7 +442,7 @@ export default function MapView({ apiRef }) {
     const coords = r.coordinates; const cum = [0];
     for (let k = 1; k < coords.length; k++) cum[k] = cum[k - 1] + haversine(coords[k - 1], coords[k]);
     c.nav = { coords, cum, steps: r.steps || [] };
-    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenCross = new Set(); c.spokenArrived = false;
+    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenCross = new Set(); c.spokenArrived = false; c.prevPos = null; c.straightSpoken = false;
     if (!c.userMarker) c.userMarker = L.marker([coords[0][1], coords[0][0]], { icon: L.divIcon({ className: "", html: '<div style="width:18px;height:18px;border-radius:50%;background:#1d6fb8;border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.6)"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(mapRef.current);
     setNav({ active: true, instr: "เริ่มเดิน (โหมดจำลอง)", distTurn: null, distDest: Math.round(cum[cum.length - 1]), hazard: null, arrived: false });
     let d = 0; const total = cum[cum.length - 1];
