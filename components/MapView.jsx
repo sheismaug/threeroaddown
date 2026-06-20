@@ -19,7 +19,22 @@ const catColor = (c) => (CAT[c]?.color || "#888");
 // แปลงรหัสการเลี้ยวของ ORS เป็นภาษาไทย
 const MAN = { 0: "เลี้ยวซ้าย", 1: "เลี้ยวขวา", 2: "เลี้ยวซ้ายหักศอก", 3: "เลี้ยวขวาหักศอก", 4: "เบี่ยงซ้าย", 5: "เบี่ยงขวา", 6: "ตรงไป", 7: "เข้าวงเวียน", 8: "ออกวงเวียน", 9: "กลับรถ", 10: "ถึงปลายทาง", 11: "เริ่มเดิน", 12: "ชิดซ้าย", 13: "ชิดขวา" };
 const thaiInstr = (st) => (MAN[st.type] || "ไปต่อ") + (st.name ? ` เข้า ${st.name}` : "");
-function speak(text) { try { if (!window.speechSynthesis) return; const u = new SpeechSynthesisUtterance(text); u.lang = "th-TH"; u.rate = 1; window.speechSynthesis.speak(u); } catch (e) {} }
+let _voices = [];
+function loadVoices() { try { _voices = (window.speechSynthesis && window.speechSynthesis.getVoices()) || []; } catch (e) {} }
+function hasThaiVoice() { if (!_voices.length) loadVoices(); return _voices.some((v) => /^th/i.test(v.lang)); }
+function pickVoice(lang) { if (!_voices.length) loadVoices(); const re = lang === "en" ? /^en/i : /^th/i; return _voices.find((v) => re.test(v.lang)) || null; }
+function speak(text, lang) {
+  try {
+    if (!window.speechSynthesis) return;
+    const u = new SpeechSynthesisUtterance(text);
+    const v = pickVoice(lang || "th");
+    if (v) u.voice = v;
+    u.lang = lang === "en" ? "en-US" : "th-TH";
+    u.rate = 1;
+    window.speechSynthesis.speak(u);
+  } catch (e) {}
+}
+const TURN_EN = { "เลี้ยวซ้าย": "turn left", "เลี้ยวขวา": "turn right", "เบี่ยงซ้าย": "keep left", "เบี่ยงขวา": "keep right", "เลี้ยวซ้ายหักศอก": "sharp left turn", "เลี้ยวขวาหักศอก": "sharp right turn", "ตรงไป": "go straight", "กลับตัว": "make a U-turn" };
 
 function loadLeaflet() {
   return new Promise((resolve, reject) => {
@@ -106,30 +121,31 @@ function countNear(samples, pts, radiusM) {
 async function fetchOSM(bbox) {
   const cacheKey = "osm:" + bbox.map((x) => Math.round(x * 1000)).join(",");
   const b = bbox.join(",");
-  const q = `[out:json][timeout:25];(node["natural"="tree"](${b});node["amenity"="toilets"](${b});way["leisure"="park"](${b});way["landuse"="grass"](${b});way["natural"="water"](${b});way["natural"="wood"](${b});node["man_made"="surveillance"](${b}););out center;`;
+  const q = `[out:json][timeout:25];(node["natural"="tree"](${b});node["amenity"="toilets"](${b});way["leisure"="park"](${b});way["landuse"="grass"](${b});way["natural"="water"](${b});way["natural"="wood"](${b});node["man_made"="surveillance"](${b});node["highway"="crossing"](${b}););out center;`;
   for (const url of OVERPASS_MIRRORS) {
     const controller = new AbortController(); const t = setTimeout(() => controller.abort(), 25000);
     try {
       const res = await fetch(url, { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: controller.signal });
       clearTimeout(t); if (!res.ok) continue;
       const json = await res.json();
-      const trees = [], buildings = [], toilets = [], green = [], cameras = [];
+      const trees = [], buildings = [], toilets = [], green = [], cameras = [], crossings = [];
       for (const el of json.elements || []) {
         const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon; if (lat == null || lon == null) continue;
         const pt = [lon, lat], tg = el.tags || {};
-        if (tg.man_made === "surveillance") cameras.push(pt);
+        if (tg.highway === "crossing") crossings.push(pt);
+        else if (tg.man_made === "surveillance") cameras.push(pt);
         else if (tg.natural === "tree") { trees.push(pt); green.push(pt); }
         else if (tg.amenity === "toilets") toilets.push({ pt, tags: tg });
         else if (tg.building) buildings.push(pt);
         else if (tg.leisure === "park" || tg.landuse === "grass" || tg.natural === "wood" || tg.natural === "water") green.push(pt);
       }
-      const out = { trees, buildings, toilets, green, cameras, ok: true };
-      try { if (toilets.length + trees.length + cameras.length > 0) localStorage.setItem(cacheKey, JSON.stringify({ trees, buildings, toilets, green, cameras })); } catch (e) {}
+      const out = { trees, buildings, toilets, green, cameras, crossings, ok: true };
+      try { if (toilets.length + trees.length + cameras.length + crossings.length > 0) localStorage.setItem(cacheKey, JSON.stringify({ trees, buildings, toilets, green, cameras, crossings })); } catch (e) {}
       return out;
     } catch (e) { clearTimeout(t); continue; }
   }
   try { const c = localStorage.getItem(cacheKey); if (c) { const o = JSON.parse(c); return { ...o, ok: true, cached: true }; } } catch (e) {}
-  return { ok: false, trees: [], buildings: [], toilets: [], green: [], cameras: [] };
+  return { ok: false, trees: [], buildings: [], toilets: [], green: [], cameras: [], crossings: [] };
 }
 function timeWeights() {
   const h = new Date().getHours();
@@ -209,7 +225,7 @@ function queuedGeocode(query) {
 export default function MapView({ apiRef }) {
   const mapEl = useRef(null);
   const mapRef = useRef(null);
-  const ctx = useRef({ L: null, routeLayer: null, problems: [], osmPromise: null, select: () => {}, scored: null, voiceOn: true });
+  const ctx = useRef({ L: null, routeLayer: null, problems: [], osmPromise: null, select: () => {}, scored: null, voiceOn: true, voiceLang: "th", crossings: [] });
   const [info, setInfo] = useState({ count: 0, source: "", loading: true });
   const [toilets, setToilets] = useState(null);
   const [cams, setCams] = useState(null);
@@ -217,6 +233,7 @@ export default function MapView({ apiRef }) {
   const [active, setActive] = useState(null);
   const [nav, setNav] = useState(null);
   const [voice, setVoice] = useState(true);
+  const [voiceLang, setVoiceLang] = useState("th");
 
   useEffect(() => {
     let cancelled = false;
@@ -224,6 +241,9 @@ export default function MapView({ apiRef }) {
       const L = await loadLeaflet();
       if (cancelled || mapRef.current) return;
       ctx.current.L = L;
+      loadVoices();
+      try { if (window.speechSynthesis) window.speechSynthesis.onvoiceschanged = () => { loadVoices(); if (!hasThaiVoice()) { ctx.current.voiceLang = "en"; setVoiceLang("en"); } }; } catch (e) {}
+      setTimeout(() => { if (!hasThaiVoice()) { ctx.current.voiceLang = "en"; setVoiceLang("en"); } }, 800);
       const map = L.map(mapEl.current).setView(CENTER, ZOOM);
       mapRef.current = map;
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
@@ -251,7 +271,7 @@ export default function MapView({ apiRef }) {
         if (cancelled) return osm;
         for (const t of osm.toilets) { const [lon, lat] = t.pt; const name = t.tags?.name || t.tags?.["name:th"] || "ห้องน้ำสาธารณะ"; L.marker([lat, lon], { icon: toiletIcon }).bindPopup(`<b>ห้องน้ำ: ${name}</b>`).addTo(toiletsLayer); }
         for (const c of osm.cameras) { const [lon, lat] = c; L.marker([lat, lon], { icon: camIcon }).bindPopup("กล้อง CCTV (OSM)").addTo(cctvLayer); }
-        setToilets(osm.toilets.length); setCams(osm.cameras.length);
+        setToilets(osm.toilets.length); setCams(osm.cameras.length); ctx.current.crossings = osm.crossings || [];
         return osm;
       });
 
@@ -317,6 +337,7 @@ export default function MapView({ apiRef }) {
         (async () => {
           const osm = within ? await c.osmPromise : await fetchOSM([la0 - mg, lo0 - mg, la1 + mg, lo1 + mg]);
           if (c.routeKey !== key) return;
+          if (osm.crossings && osm.crossings.length) c.crossings = osm.crossings;
           const full = scoreRoutes(routes, osm, c.problems);
           const best = full.reduce((bi, r, i, a) => ((r.comfort ?? -1) > (a[bi].comfort ?? -1) ? i : bi), 0);
           c.best = best; c.scored = full.map((r, i) => ({ ...r, recommended: i === best }));
@@ -331,39 +352,57 @@ export default function MapView({ apiRef }) {
   // ---------- โหมดนำทาง GPS ----------
   function updateNav(u) {
     const c = ctx.current, n = c.nav; if (!n) return;
+    const lang = c.voiceLang || "th";
     c.userMarker?.setLatLng([u[1], u[0]]);
     if (mapRef.current) mapRef.current.setView([u[1], u[0]], Math.max(mapRef.current.getZoom(), 17), { animate: true });
     let idx = 0, bd = Infinity;
-    for (let k = 0; k < n.coords.length; k++) { const d = haversine(u, n.coords[k]); if (d < bd) { bd = d; idx = k; } }
+    for (let i = 0; i < n.coords.length; i++) { const d = haversine(u, n.coords[i]); if (d < bd) { bd = d; idx = i; } }
     const distDest = Math.max(0, Math.round(n.cum[n.cum.length - 1] - n.cum[idx]));
     let k = n.steps.findIndex((st) => idx <= st.wpEnd); if (k < 0) k = n.steps.length - 1;
-    const cur = n.steps[k]; const nextTurn = n.steps[k + 1] || null;
-    const distTurn = cur ? Math.max(0, Math.round(n.cum[cur.wpEnd] - n.cum[idx])) : 0;
-    let instr = "ตรงไปยังปลายทาง";
-    if (nextTurn) {
-      const t = turnAt(n.coords, cur.wpEnd) || (MAN[nextTurn.type] || "ไปต่อ");
-      instr = t + (nextTurn.name ? ` เข้า ${nextTurn.name}` : "");
+    let mWp = null, mTurn = null, mName = "";
+    for (let j = k + 1; j < n.steps.length; j++) {
+      const wp = n.steps[j].wpStart;
+      const tt = turnAt(n.coords, wp);
+      if (tt && tt !== "ตรงไป") { mWp = wp; mTurn = tt; mName = n.steps[j].name || ""; break; }
+    }
+    const distTurn = mWp != null ? Math.max(0, Math.round(n.cum[mWp] - n.cum[idx])) : distDest;
+    const instr = lang === "en"
+      ? (TURN_EN[mTurn] || "continue to destination") + (mName ? " onto " + mName : "")
+      : (mTurn || "ตรงไปยังปลายทาง") + (mName ? ` เข้า ${mName}` : "");
+    let crossAhead = null, cbest = Infinity;
+    for (const cp of c.crossings || []) {
+      if (haversine(u, cp) > 60) continue;
+      let ci = 0, cb = Infinity; for (let i = 0; i < n.coords.length; i++) { const dd = haversine(cp, n.coords[i]); if (dd < cb) { cb = dd; ci = i; } }
+      if (cb > 20 || ci < idx) continue;
+      const al = Math.round(n.cum[ci] - n.cum[idx]);
+      if (al >= 0 && al < cbest) { cbest = al; crossAhead = { dist: al, id: cp.join(",") }; }
     }
     let hazard = null, hbest = Infinity, hid = null;
     for (const p of c.problems) {
       if (haversine(u, p.pt) > 80) continue;
-      let pidx = 0, pbd = Infinity; for (let k2 = 0; k2 < n.coords.length; k2++) { const dd = haversine(p.pt, n.coords[k2]); if (dd < pbd) { pbd = dd; pidx = k2; } }
-      if (pbd > 28 || pidx < idx - 4) continue; // ต้องอยู่ในแนวทางเดินจริง (ตัดฝั่งตรงข้ามถนน)
+      let pidx = 0, pbd = Infinity; for (let i = 0; i < n.coords.length; i++) { const dd = haversine(p.pt, n.coords[i]); if (dd < pbd) { pbd = dd; pidx = i; } }
+      if (pbd > 28 || pidx < idx - 4) continue;
       const along = Math.round(n.cum[pidx] - n.cum[idx]);
       if (along > 90) continue;
       const near = Math.abs(along);
       if (near < hbest) { hbest = near; hazard = { label: CAT[p.cat]?.label || "จุดเสี่ยง", dist: Math.max(0, along) }; hid = p.pt.join(","); }
     }
     const arrived = distDest < 20;
-    setNav({ active: true, instr, distTurn, distDest, hazard, arrived });
+    setNav({ active: true, instr, distTurn, distDest, hazard, arrived, cross: crossAhead });
     if (c.voiceOn) {
       const rnd = (m) => Math.max(10, Math.round(m / 10) * 10);
-      if (nextTurn && distTurn <= 45 && !c.spokenTurns.has(k + 1)) {
-        c.spokenTurns.add(k + 1);
-        speak(distTurn <= 12 ? instr : `ในอีก ${rnd(distTurn)} เมตร ${instr}`);
+      const en = lang === "en";
+      if (crossAhead && crossAhead.dist <= 30 && c.spokenCross && !c.spokenCross.has(crossAhead.id)) {
+        c.spokenCross.add(crossAhead.id);
+        speak(en ? "Prepare to cross the road, watch for traffic" : "เตรียมข้ามถนน ระวังรถ", lang);
+      } else if (mWp != null && distTurn <= 45 && !c.spokenTurns.has(mWp)) {
+        c.spokenTurns.add(mWp);
+        const m = rnd(distTurn);
+        if (distTurn <= 12) speak(instr, lang);
+        else speak(en ? `In ${m} meters, ${TURN_EN[mTurn] || "continue"}${mName ? " onto " + mName : ""}` : `ในอีก ${m} เมตร ${instr}`, lang);
       }
-      if (hazard && hazard.dist < 50 && !c.spokenHaz.has(hid)) { c.spokenHaz.add(hid); speak(`ระวัง ${hazard.label} ข้างหน้า`); }
-      if (arrived && !c.spokenArrived) { c.spokenArrived = true; speak("ถึงปลายทางแล้ว"); }
+      if (hazard && hazard.dist < 50 && !c.spokenHaz.has(hid)) { c.spokenHaz.add(hid); speak(en ? "Caution, obstacle ahead" : `ระวัง ${hazard.label} ข้างหน้า`, lang); }
+      if (arrived && !c.spokenArrived) { c.spokenArrived = true; speak(en ? "You have arrived" : "ถึงปลายทางแล้ว", lang); }
     }
   }
   function onPos(pos) { updateNav([pos.coords.longitude, pos.coords.latitude]); }
@@ -373,7 +412,7 @@ export default function MapView({ apiRef }) {
     const coords = r.coordinates; const cum = [0];
     for (let k = 1; k < coords.length; k++) cum[k] = cum[k - 1] + haversine(coords[k - 1], coords[k]);
     c.nav = { coords, cum, steps: r.steps || [] };
-    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenArrived = false;
+    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenCross = new Set(); c.spokenArrived = false;
     if (!c.userMarker) c.userMarker = L.marker([coords[0][1], coords[0][0]], { icon: L.divIcon({ className: "", html: '<div style="width:18px;height:18px;border-radius:50%;background:#1d6fb8;border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.6)"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(mapRef.current);
     setNav({ active: true, instr: "กำลังหาตำแหน่ง…", distTurn: null, distDest: Math.round(cum[cum.length - 1]), hazard: null, arrived: false });
     if (!navigator.geolocation) { onErr(); return; }
@@ -385,7 +424,7 @@ export default function MapView({ apiRef }) {
     const coords = r.coordinates; const cum = [0];
     for (let k = 1; k < coords.length; k++) cum[k] = cum[k - 1] + haversine(coords[k - 1], coords[k]);
     c.nav = { coords, cum, steps: r.steps || [] };
-    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenArrived = false;
+    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenCross = new Set(); c.spokenArrived = false;
     if (!c.userMarker) c.userMarker = L.marker([coords[0][1], coords[0][0]], { icon: L.divIcon({ className: "", html: '<div style="width:18px;height:18px;border-radius:50%;background:#1d6fb8;border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.6)"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(mapRef.current);
     setNav({ active: true, instr: "เริ่มเดิน (โหมดจำลอง)", distTurn: null, distDest: Math.round(cum[cum.length - 1]), hazard: null, arrived: false });
     let d = 0; const total = cum[cum.length - 1];
@@ -404,6 +443,7 @@ export default function MapView({ apiRef }) {
   }
 
   function toggleVoice() { const c = ctx.current; c.voiceOn = !c.voiceOn; setVoice(c.voiceOn); if (!c.voiceOn && window.speechSynthesis) window.speechSynthesis.cancel(); }
+  function toggleVoiceLang() { const c = ctx.current; c.voiceLang = c.voiceLang === "en" ? "th" : "en"; setVoiceLang(c.voiceLang); }
 
   const navTarget = active ?? (routeData && !routeData.error && !routeData.loading ? routeData.best : null);
 
@@ -437,9 +477,11 @@ export default function MapView({ apiRef }) {
                   {nav.distTurn != null ? <div style={{ fontSize: 14, opacity: 0.9 }}>อีก {nav.distTurn} ม. · เหลือถึงปลายทาง {nav.distDest} ม.</div> : <div style={{ fontSize: 13, opacity: 0.9 }}>{nav.distDest != null ? `เหลือ ${nav.distDest} ม.` : ""}</div>}
                 </>
               )}
+              {nav.cross ? <div style={{ marginTop: 6, background: "#e9a23b", borderRadius: 6, padding: "5px 8px", fontWeight: 700, fontSize: 14 }}>🚸 เตรียมข้ามถนน อีก ~{nav.cross.dist} ม.</div> : null}
               {nav.hazard ? <div style={{ marginTop: 6, background: "#c1121f", borderRadius: 6, padding: "5px 8px", fontWeight: 700, fontSize: 14 }}>⚠️ ระวัง {nav.hazard.label} อีก ~{nav.hazard.dist} ม.</div> : null}
             </div>
             <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={toggleVoiceLang} style={{ background: "rgba(255,255,255,.25)", border: "none", color: "#fff", borderRadius: 8, padding: "8px 10px", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>{voiceLang === "en" ? "EN" : "ไทย"}</button>
               <button onClick={toggleVoice} style={{ background: "rgba(255,255,255,.25)", border: "none", color: "#fff", borderRadius: 8, padding: "8px 11px", fontWeight: 700, cursor: "pointer", fontSize: 16 }}>{voice ? "🔊" : "🔇"}</button>
               <button onClick={stopNav} style={{ background: "rgba(255,255,255,.25)", border: "none", color: "#fff", borderRadius: 8, padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}>หยุด</button>
             </div>
