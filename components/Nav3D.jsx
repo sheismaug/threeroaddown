@@ -75,6 +75,7 @@ export default function Nav3D({ route, problems, destName, onClose }) {
 
   useEffect(() => {
     let cancelled = false;
+    try { if (window.speechSynthesis) { _v = window.speechSynthesis.getVoices() || []; window.speechSynthesis.onvoiceschanged = () => { _v = window.speechSynthesis.getVoices() || []; }; } } catch (e) {}
     const coords = route.coordinates;
     const cum = [0]; for (let i = 1; i < coords.length; i++) cum[i] = cum[i - 1] + haversine(coords[i - 1], coords[i]);
     const steps = route.steps || [];
@@ -94,7 +95,8 @@ export default function Nav3D({ route, problems, destName, onClose }) {
       const map = new maplibregl.Map({
         container: elRef.current,
         style: "https://tiles.openfreemap.org/styles/bright",
-        center: coords[0], zoom: 19, pitch: 80, bearing: 0, maxPitch: 82, attributionControl: false,
+        center: coords[0], zoom: 18, pitch: 64, bearing: 0, maxPitch: 70, attributionControl: false,
+        antialias: true, fadeDuration: 0,
       });
       mapRef.current = map;
 
@@ -147,22 +149,22 @@ export default function Nav3D({ route, problems, destName, onClose }) {
           ctx.current.prev = u;
           ctx.current.marker.setLngLat(u);
           if (ctx.current.marker.setRotation) ctx.current.marker.setRotation(hd);
-          map.easeTo({ center: u, bearing: hd, pitch: 80, zoom: 19, duration: 600, offset: [0, 150] });
+          map.easeTo({ center: u, bearing: hd, pitch: 64, zoom: 18, duration: 640, offset: [0, 130], essential: true });
 
           const L = ctx.current.lang;
           const idx = k;
           let mWp = null, mName = "";
           let ks = steps.findIndex((st) => idx <= st.wpEnd); if (ks < 0) ks = steps.length - 1;
           for (let j = ks + 1; j < steps.length; j++) { const wp = steps[j].wpStart; const tt = turnSide(coords, wp, u); if (tt && tt !== "ตรงไป") { mWp = wp; mName = steps[j].name || ""; break; } }
-          const distTurn = mWp != null ? Math.max(0, Math.round(cum[mWp] - cum[idx])) : Math.max(0, Math.round(total - cum[idx]));
+          const distTurn = mWp != null ? Math.max(0, Math.round(cum[mWp] - d)) : Math.max(0, Math.round(total - d));
           const turnTHv = mWp != null ? turnSide(coords, mWp, u) : null;
           const instr = mWp == null ? (L === "en" ? "Continue to destination" : "ตรงไปยังปลายทาง")
             : (L === "en" ? (TURN_EN[turnTHv] || "turn") + (mName ? " onto " + mName : "") : turnTHv + (mName ? ` เข้า ${mName}` : ""));
-          const destLeft = Math.max(0, Math.round(total - cum[idx]));
+          const destLeft = Math.max(0, Math.round(total - d));
           setBanner({ instr, dist: distTurn, dest: destLeft });
 
           let alert = null, ab = Infinity;
-          for (const p of hazNear) { const a = Math.round(p.ralong - cum[idx]); if (a >= 3 && a <= 60 && a < ab) { ab = a; alert = { ...hz(p.cat), dist: a, id: p.pt.join(",") }; } }
+          for (const p of hazNear) { const a = Math.round(p.ralong - d); if (a >= 3 && a <= 60 && a < ab) { ab = a; alert = { ...hz(p.cat), dist: a, id: p.pt.join(",") }; } }
           setHazAlert(alert);
 
           if (ctx.current.voiceOn) {

@@ -36,6 +36,8 @@ function speak(text, lang) {
   } catch (e) {}
 }
 function speakNow(text, lang) { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {} speak(text, lang); }
+// ปลดล็อกเสียงบนมือถือ: ต้องเรียกตอนผู้ใช้แตะปุ่ม (user gesture) ไม่งั้น iOS/Android บล็อกเสียงทั้งหมด
+function unlockSpeech() { try { if (!window.speechSynthesis) return; loadVoices(); const u = new SpeechSynthesisUtterance(" "); u.volume = 0.01; window.speechSynthesis.speak(u); } catch (e) {} }
 const TURN_EN = { "เลี้ยวซ้าย": "turn left", "เลี้ยวขวา": "turn right", "เบี่ยงซ้าย": "keep left", "เบี่ยงขวา": "keep right", "เลี้ยวซ้ายหักศอก": "sharp left turn", "เลี้ยวขวาหักศอก": "sharp right turn", "ตรงไป": "go straight", "กลับตัว": "make a U-turn" };
 const ROAD_EN = {
   "อังรีดูนังต์": "Henri Dunant Road", "พระรามที่ 1": "Rama I Road", "พระราม 1": "Rama I Road",
@@ -487,13 +489,13 @@ export default function MapView({ apiRef }) {
       <style>{`
         .wb-card{position:absolute;background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:system-ui;z-index:1000;}
         .wb-info{top:12px;left:12px;max-width:280px;padding:10px 14px;}
-        .wb-route{top:12px;right:12px;width:300px;padding:10px 14px;}
+        .wb-route{top:12px;right:12px;width:300px;padding:10px 14px;z-index:1300;}
         .wb-legend{bottom:16px;left:12px;padding:8px 12px;font-size:12px;column-count:2;column-gap:14px;}
         .wb-nav{top:0;left:0;right:0;border-radius:0;background:#1d6fb8;color:#fff;padding:12px 16px;z-index:1600;}
         .wb-startbtn{display:block;width:100%;margin-top:8px;padding:10px;border:none;border-radius:8px;background:#1d6fb8;color:#fff;font-weight:800;font-size:15px;cursor:pointer;}
         @media (max-width:640px){
           .wb-info{max-width:54vw;padding:7px 9px;font-size:12px;top:8px;left:8px;}
-          .wb-route{width:auto;left:8px;right:8px;top:auto;bottom:78px;max-height:44vh;overflow:auto;}
+          .wb-route{width:auto;left:8px;right:8px;top:62px;bottom:auto;max-height:64vh;overflow:auto;z-index:1300;}
           .wb-legend{display:none;}
         }
       `}</style>
@@ -538,9 +540,9 @@ export default function MapView({ apiRef }) {
             <div>
               {navTarget != null ? (
                 <div style={{ marginBottom: 8 }}>
-                  <button className="wb-startbtn" style={{ background: "#6a4c93" }} onClick={() => { const r = ctx.current.scored?.[navTarget]; if (r) setNav3D({ route: r, problems: ctx.current.problems, destName: routeData?.endName || "ปลายทาง" }); }}>🧭 นำทาง 3D (จำลอง)</button>
-                  <button className="wb-startbtn" style={{ marginTop: 6 }} onClick={() => startSim(navTarget)}>🧪 ทดลองเดิน 2D</button>
-                  <button className="wb-startbtn" style={{ background: "#1d6fb8", marginTop: 6 }} onClick={() => startNav(navTarget)}>▶ นำทางจริง (GPS)</button>
+                  <button className="wb-startbtn" style={{ background: "#6a4c93" }} onClick={() => { unlockSpeech(); const r = ctx.current.scored?.[navTarget]; if (r) setNav3D({ route: r, problems: ctx.current.problems, destName: routeData?.endName || "ปลายทาง" }); }}>🧭 นำทาง 3D (จำลอง)</button>
+                  <button className="wb-startbtn" style={{ marginTop: 6 }} onClick={() => { unlockSpeech(); startSim(navTarget); }}>🧪 ทดลองเดิน 2D</button>
+                  <button className="wb-startbtn" style={{ background: "#1d6fb8", marginTop: 6 }} onClick={() => { unlockSpeech(); startNav(navTarget); }}>▶ นำทางจริง (GPS)</button>
                 </div>
               ) : null}
               {routeData.routes.map((r) => (
