@@ -62,7 +62,7 @@ function countNear(samples, pts, radiusM) {
 }
 async function fetchOSM(bbox) {
   const b = bbox.join(",");
-  const q = `[out:json][timeout:25];(node["natural"="tree"](${b});way["building"](${b});node["amenity"="toilets"](${b});way["leisure"="park"](${b});way["landuse"="grass"](${b});way["natural"="water"](${b});way["natural"="wood"](${b});node["man_made"="surveillance"](${b}););out center;`;
+  const q = `[out:json][timeout:25];(node["natural"="tree"](${b});node["amenity"="toilets"](${b});way["leisure"="park"](${b});way["landuse"="grass"](${b});way["natural"="water"](${b});way["natural"="wood"](${b});node["man_made"="surveillance"](${b}););out center;`;
   for (const url of OVERPASS_MIRRORS) {
     const controller = new AbortController(); const t = setTimeout(() => controller.abort(), 25000);
     try {
@@ -85,7 +85,7 @@ async function fetchOSM(bbox) {
   return { ok: false, trees: [], buildings: [], toilets: [], green: [], cameras: [] };
 }
 function scoreRoutes(routes, osm, problems) {
-  const shadePts = [...osm.trees, ...osm.buildings];
+  const shadePts = osm.trees;
   const toiletPts = osm.toilets.map((t) => t.pt);
   const allHaz = problems.map((p) => p.pt);
   const floodPts = problems.filter((p) => p.cat === "flood").map((p) => p.pt);
@@ -122,6 +122,15 @@ async function geocodeNominatim(q) {
     const j = await r.json(); if (!j.length) return null;
     return { coord: [parseFloat(j[0].lon), parseFloat(j[0].lat)], name: (j[0].display_name || q).split(",")[0] };
   } catch (e) { return null; }
+}
+
+function pointAtDistance(coords, cum, d) {
+  if (d <= 0) return coords[0];
+  const last = cum.length - 1;
+  if (d >= cum[last]) return coords[last];
+  let k = 0; while (k < last && cum[k + 1] < d) k++;
+  const seg = (cum[k + 1] - cum[k]) || 1; const t = (d - cum[k]) / seg;
+  return [coords[k][0] + (coords[k + 1][0] - coords[k][0]) * t, coords[k][1] + (coords[k + 1][1] - coords[k][1]) * t];
 }
 
 export default function MapView({ apiRef }) {
@@ -216,9 +225,8 @@ export default function MapView({ apiRef }) {
   }, [apiRef]);
 
   // ---------- โหมดนำทาง GPS ----------
-  function onPos(pos) {
+  function updateNav(u) {
     const c = ctx.current, n = c.nav; if (!n) return;
-    const u = [pos.coords.longitude, pos.coords.latitude];
     c.userMarker?.setLatLng([u[1], u[0]]);
     if (mapRef.current) mapRef.current.setView([u[1], u[0]], Math.max(mapRef.current.getZoom(), 17), { animate: true });
     let idx = 0, bd = Infinity;
@@ -242,6 +250,7 @@ export default function MapView({ apiRef }) {
     if (hazard && hazard.dist < 60 && !c.spokenHaz.has(hid)) { c.spokenHaz.add(hid); speak(`ระวัง ${hazard.label} อีกประมาณ ${hazard.dist} เมตร`); }
     if (arrived && !c.spokenArrived) { c.spokenArrived = true; speak("ถึงปลายทางแล้ว"); }
   }
+  function onPos(pos) { updateNav([pos.coords.longitude, pos.coords.latitude]); }
   function onErr() { setNav((p) => ({ ...(p || { active: true }), instr: "เปิด GPS ไม่สำเร็จ — อนุญาตตำแหน่ง แล้วเปิดเว็บแบบ HTTPS บนมือถือ", distTurn: null, distDest: null, hazard: null })); }
   function startNav(i) {
     const c = ctx.current, L = c.L; const r = c.scored?.[i]; if (!r || !L) return;
@@ -254,9 +263,26 @@ export default function MapView({ apiRef }) {
     if (!navigator.geolocation) { onErr(); return; }
     c.navWatch = navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 });
   }
+  function startSim(i) {
+    const c = ctx.current, L = c.L; const r = c.scored?.[i]; if (!r || !L) return;
+    if (c.simTimer) { clearInterval(c.simTimer); c.simTimer = null; }
+    const coords = r.coordinates; const cum = [0];
+    for (let k = 1; k < coords.length; k++) cum[k] = cum[k - 1] + haversine(coords[k - 1], coords[k]);
+    c.nav = { coords, cum, steps: r.steps || [] };
+    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenArrived = false;
+    if (!c.userMarker) c.userMarker = L.marker([coords[0][1], coords[0][0]], { icon: L.divIcon({ className: "", html: '<div style="width:18px;height:18px;border-radius:50%;background:#1d6fb8;border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.6)"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(mapRef.current);
+    setNav({ active: true, instr: "เริ่มเดิน (โหมดจำลอง)", distTurn: null, distDest: Math.round(cum[cum.length - 1]), hazard: null, arrived: false });
+    let d = 0; const total = cum[cum.length - 1];
+    c.simTimer = setInterval(() => {
+      d += 20; if (d > total) d = total;
+      updateNav(pointAtDistance(coords, cum, d));
+      if (d >= total) { clearInterval(c.simTimer); c.simTimer = null; }
+    }, 650);
+  }
   function stopNav() {
     const c = ctx.current;
     if (c.navWatch != null) { navigator.geolocation.clearWatch(c.navWatch); c.navWatch = null; }
+    if (c.simTimer) { clearInterval(c.simTimer); c.simTimer = null; }
     if (c.userMarker && mapRef.current) { mapRef.current.removeLayer(c.userMarker); c.userMarker = null; }
     c.nav = null; setNav(null);
   }
@@ -324,7 +350,12 @@ export default function MapView({ apiRef }) {
                 </button>
               ))}
               {routeData.note ? <div style={{ fontSize: 11, color: "#b5651d", marginTop: 4 }}>{routeData.note}</div> : null}
-              {navTarget != null ? <button className="wb-startbtn" onClick={() => startNav(navTarget)}>▶ เริ่มนำทางเส้น {navTarget + 1}</button> : null}
+              {navTarget != null ? (
+                <>
+                  <button className="wb-startbtn" onClick={() => startNav(navTarget)}>▶ เริ่มนำทาง (GPS จริง)</button>
+                  <button className="wb-startbtn" style={{ background: "#2a9d54", marginTop: 6 }} onClick={() => startSim(navTarget)}>🧪 ทดลองเดิน (จำลอง)</button>
+                </>
+              ) : null}
             </div>
           )}
         </div>
