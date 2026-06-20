@@ -149,6 +149,18 @@ function countNear(samples, pts, radiusM) {
 async function fetchOSM(bbox) {
   const cacheKey = "osm:" + bbox.map((x) => Math.round(x * 1000)).join(",");
   const b = bbox.join(",");
+  // 1) ดึงผ่านเซิร์ฟเวอร์ (Vercel) — เสถียรกว่าดึง Overpass จากมือถือตรงๆ
+  try {
+    const res = await fetch("/api/osm?bbox=" + encodeURIComponent(b));
+    if (res.ok) {
+      const o = await res.json();
+      if (o && o.ok) {
+        try { localStorage.setItem(cacheKey, JSON.stringify({ trees: o.trees, buildings: o.buildings, toilets: o.toilets, green: o.green, cameras: o.cameras, crossings: o.crossings })); } catch (e) {}
+        return { ...o, ok: true };
+      }
+    }
+  } catch (e) {}
+  // 2) สำรอง: ดึง Overpass ตรงจากเบราว์เซอร์
   const q = `[out:json][timeout:25];(node["natural"="tree"](${b});node["amenity"="toilets"](${b});way["leisure"="park"](${b});way["landuse"="grass"](${b});way["natural"="water"](${b});way["natural"="wood"](${b});node["man_made"="surveillance"](${b});node["highway"="crossing"](${b}););out center;`;
   for (const url of OVERPASS_MIRRORS) {
     const controller = new AbortController(); const t = setTimeout(() => controller.abort(), 25000);
@@ -217,6 +229,35 @@ function popupHtml(p) {
   const date = (p.timestamp || "").slice(0, 16); const lbl = CAT[p.cat]?.label || p.type || "ปัญหา";
   return `<div style="max-width:240px;font-family:system-ui"><div style="font-weight:700;color:${catColor(p.cat)}">${lbl}</div><div style="font-size:13px;margin:4px 0;white-space:pre-wrap">${(p.comment || "").slice(0, 240)}</div><div style="font-size:12px;color:#555">สถานะ: <b>${p.state || "-"}</b></div><div style="font-size:11px;color:#888">${date}</div>${photo}</div>`;
 }
+// พจนานุกรมสถานที่สำคัญย่านปทุมวัน (พิกัดจริงโดยประมาณ) — ใช้ก่อนถาม Nominatim เพื่อความแม่นยำ/กันชื่อกำกวม
+const LANDMARKS = [
+  { aliases: ["สนามกีฬาแห่งชาติ", "สนามกีฬา", "national stadium", "สนามศุภ", "ศุภชลาศัย"], coord: [100.5294, 13.7466], name: "สนามกีฬาแห่งชาติ" },
+  { aliases: ["สยามพารากอน", "พารากอน", "paragon"], coord: [100.5347, 13.7462], name: "สยามพารากอน" },
+  { aliases: ["สยามสแควร์", "สยาม", "siam"], coord: [100.5331, 13.7456], name: "สยาม (BTS)" },
+  { aliases: ["มาบุญครอง", "mbk", "เอ็มบีเค"], coord: [100.5300, 13.7445], name: "MBK / มาบุญครอง" },
+  { aliases: ["โรงพยาบาลจุฬา", "รพ.จุฬา", "รพจุฬา", "chula hospital"], coord: [100.5366, 13.7295], name: "รพ.จุฬาฯ" },
+  { aliases: ["จุฬาลงกรณ์มหาวิทยาลัย", "จุฬาลงกรณ์", "จุฬา", "chulalongkorn", "chula"], coord: [100.5318, 13.7378], name: "จุฬาลงกรณ์มหาวิทยาลัย" },
+  { aliases: ["สามย่านมิตรทาวน์", "สามย่าน", "samyan"], coord: [100.5283, 13.7320], name: "สามย่าน" },
+  { aliases: ["จามจุรีสแควร์", "จามจุรี", "chamchuri"], coord: [100.5295, 13.7335], name: "จามจุรีสแควร์" },
+  { aliases: ["เซ็นทรัลเวิลด์", "centralworld", "central world"], coord: [100.5396, 13.7466], name: "เซ็นทรัลเวิลด์" },
+  { aliases: ["ราชประสงค์", "ratchaprasong"], coord: [100.5400, 13.7445], name: "ราชประสงค์" },
+  { aliases: ["ราชเทวี", "ratchathewi"], coord: [100.5320, 13.7585], name: "ราชเทวี" },
+  { aliases: ["สีลม", "silom"], coord: [100.5340, 13.7248], name: "สีลม" },
+  { aliases: ["หัวลำโพง", "hua lamphong", "hualamphong"], coord: [100.5170, 13.7373], name: "หัวลำโพง" },
+  { aliases: ["ปทุมวัน", "pathumwan", "pathum wan"], coord: [100.5320, 13.7440], name: "ปทุมวัน" },
+];
+function resolvePlace(q) {
+  if (!q) return null;
+  const s = q.trim().toLowerCase();
+  if (s.length < 2) return null;
+  for (const lm of LANDMARKS) {
+    for (const a of lm.aliases) {
+      const al = a.toLowerCase();
+      if (s.includes(al) || (al.length >= 3 && al.includes(s))) return { coord: lm.coord, name: lm.name, landmark: true };
+    }
+  }
+  return null;
+}
 async function geocodeNominatim(q) {
   try {
     const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=th&countrycodes=th&viewbox=100.45,13.95,100.75,13.55&bounded=1&q=${encodeURIComponent(q)}`;
@@ -263,6 +304,7 @@ export default function MapView({ apiRef }) {
   const [voice, setVoice] = useState(true);
   const [voiceLang, setVoiceLang] = useState("th");
   const [nav3d, setNav3D] = useState(null);
+  const [legendOpen, setLegendOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -333,9 +375,10 @@ export default function MapView({ apiRef }) {
         if (c.routeKey === key && c.scored) { c.select(c.best); return c.scored; }
         c.routeLayer.clearLayers(); setRouteData({ loading: true });
         let sName = "สยาม (BTS)", eName = "รพ.จุฬาฯ", sCoord = null, eCoord = null, note = null;
-        const [gFrom, gTo] = await Promise.all([from ? geocodeNominatim(from) : null, to ? geocodeNominatim(to) : null]);
-        if (from) { if (gFrom) { sCoord = gFrom.coord; sName = gFrom.name; } else note = `หา "${from}" ไม่เจอ ใช้จุดเริ่มต้นเดิม`; }
-        if (to) { if (gTo) { eCoord = gTo.coord; eName = gTo.name; } else note = (note ? note + " · " : "") + `หา "${to}" ไม่เจอ ใช้ปลายทางเดิม`; }
+        const resolve = async (x) => (x ? (resolvePlace(x) || (await geocodeNominatim(x))) : null);
+        const [gFrom, gTo] = await Promise.all([resolve(from), resolve(to)]);
+        if (from) { if (gFrom) { sCoord = gFrom.coord; sName = gFrom.name; } else note = `หา "${from}" ไม่เจอ (ใช้สยามแทน) — ลองพิมพ์ชื่อให้ชัดขึ้น เช่น สนามกีฬาแห่งชาติ`; }
+        if (to) { if (gTo) { eCoord = gTo.coord; eName = gTo.name; } else note = (note ? note + " · " : "") + `หา "${to}" ไม่เจอ (ใช้ รพ.จุฬาฯ แทน)`; }
         let data;
         try {
           const qs = new URLSearchParams();
@@ -493,10 +536,14 @@ export default function MapView({ apiRef }) {
         .wb-legend{bottom:16px;left:12px;padding:8px 12px;font-size:12px;column-count:2;column-gap:14px;}
         .wb-nav{top:0;left:0;right:0;border-radius:0;background:#1d6fb8;color:#fff;padding:12px 16px;z-index:1600;}
         .wb-startbtn{display:block;width:100%;margin-top:8px;padding:10px;border:none;border-radius:8px;background:#1d6fb8;color:#fff;font-weight:800;font-size:15px;cursor:pointer;}
+        .wb-legendtoggle{display:none;position:absolute;bottom:16px;left:12px;z-index:1100;background:#fff;border:1px solid #ddd;border-radius:20px;box-shadow:0 2px 8px rgba(0,0,0,.2);padding:7px 12px;font-size:13px;font-weight:700;cursor:pointer;}
         @media (max-width:640px){
           .wb-info{max-width:54vw;padding:7px 9px;font-size:12px;top:8px;left:8px;}
           .wb-route{width:auto;left:8px;right:8px;top:62px;bottom:auto;max-height:64vh;overflow:auto;z-index:1300;}
-          .wb-legend{display:none;}
+          body.wb-chatopen .wb-route{display:none;}
+          .wb-legend{display:none;bottom:58px;left:8px;font-size:11px;column-count:2;column-gap:10px;padding:8px 10px;max-width:82vw;z-index:1150;}
+          .wb-legend.open{display:block;}
+          .wb-legendtoggle{display:block;}
         }
       `}</style>
 
@@ -565,7 +612,8 @@ export default function MapView({ apiRef }) {
         </div>
       ) : null}
 
-      <div className="wb-card wb-legend">
+      {!nav?.active ? <button className="wb-legendtoggle" onClick={() => setLegendOpen((v) => !v)}>{legendOpen ? "✕ ปิดสัญลักษณ์" : "🎨 สัญลักษณ์"}</button> : null}
+      <div className={"wb-card wb-legend" + (legendOpen ? " open" : "")}>
         {Object.values(CAT).map((c) => <Legend key={c.label} color={c.color} label={c.label} />)}
         <Legend color="#2a9d8f" label="ห้องน้ำ (W)" />
         <Legend color="#1b998b" label="กล้อง CCTV (C)" />

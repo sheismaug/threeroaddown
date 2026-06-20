@@ -21,6 +21,12 @@ export default function ChatBox({ mapApi }) {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [msgs, open]);
 
+  // แจ้งแผนที่ว่าแชตเปิดอยู่ เพื่อซ่อนแผงเส้นทางบนมือถือ (กันซ้อนทับ)
+  useEffect(() => {
+    try { document.body.classList.toggle("wb-chatopen", open); } catch (e) {}
+    return () => { try { document.body.classList.remove("wb-chatopen"); } catch (e) {} };
+  }, [open]);
+
   async function send(text) {
     const q = (text ?? input).trim();
     if (!q || busy) return;
@@ -69,7 +75,7 @@ export default function ChatBox({ mapApi }) {
     <div
       style={{
         position: "fixed", right: 16, bottom: 16, zIndex: 1200, width: 340, maxWidth: "92vw",
-        height: 460, maxHeight: "80vh", background: "white", borderRadius: 14,
+        height: 460, maxHeight: "72vh", background: "white", borderRadius: 14,
         boxShadow: "0 4px 20px rgba(0,0,0,.3)", display: "flex", flexDirection: "column", overflow: "hidden",
       }}
     >
