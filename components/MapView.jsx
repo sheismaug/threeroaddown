@@ -84,7 +84,15 @@ async function fetchOSM(bbox) {
   }
   return { ok: false, trees: [], buildings: [], toilets: [], green: [], cameras: [] };
 }
+function timeWeights() {
+  const h = new Date().getHours();
+  const day = h >= 7 && h < 18;
+  return day
+    ? { safe: 0.35, shade: 0.30, green: 0.20, toilet: 0.15, night: false, mode: "กลางวัน ☀️ (ให้ความสำคัญกับร่มเงา)" }
+    : { safe: 0.55, shade: 0.0, green: 0.10, toilet: 0.15, night: true, mode: "กลางคืน 🌙 (เน้นแสงสว่าง/หลีกจุดมืด แทนร่ม)" };
+}
 function scoreRoutes(routes, osm, problems) {
+  const WT = timeWeights();
   const shadePts = osm.trees;
   const toiletPts = osm.toilets.map((t) => t.pt);
   const allHaz = problems.map((p) => p.pt);
@@ -99,14 +107,15 @@ function scoreRoutes(routes, osm, problems) {
     const shadeR = ratioNear(samples, shadePts, 25);
     const greenR = ratioNear(samples, osm.green, 40);
     const toiletsN = countNear(samples, toiletPts, 150);
-    const safe = Math.max(0, Math.min(100, Math.round(100 * Math.exp(-hazards / 12)) + Math.min(15, cams * 3)));
+    const hazAdj = hazards + (WT.night ? darkN * 1.5 : 0); // กลางคืน จุดมืดอันตรายกว่า
+    const safe = Math.max(0, Math.min(100, Math.round(100 * Math.exp(-hazAdj / 12)) + Math.min(15, cams * 3)));
     const shade = shadeR == null ? null : Math.round(shadeR * 100);
     const green = greenR == null ? null : Math.round(greenR * 100);
     const toilet = osm.ok ? Math.min(100, toiletsN * 34) : null;
     let num = 0, den = 0; const add = (v, w) => { if (v != null) { num += v * w; den += w; } };
-    add(safe, W.safe); add(shade, W.shade); add(green, W.green); add(toilet, W.toilet);
+    add(safe, WT.safe); add(shade, WT.shade); add(green, WT.green); add(toilet, WT.toilet);
     const comfort = den ? Math.round(num / den) : null;
-    return { ...r, hazards, cameras: cams, floodN, darkN, safe, shade, green, toilet, toiletsNear: toiletsN, comfort };
+    return { ...r, hazards, cameras: cams, floodN, darkN, safe, shade, green, toilet, toiletsNear: toiletsN, comfort, timeMode: WT.mode };
   });
 }
 function comfortColor(v) { if (v == null) return "#888"; if (v >= 70) return "#2a9d54"; if (v >= 45) return "#e9a23b"; return "#c1121f"; }
@@ -192,8 +201,9 @@ export default function MapView({ apiRef }) {
         if (c.routeKey === key && c.scored) { c.select(c.best); return c.scored; }
         c.routeLayer.clearLayers(); setRouteData({ loading: true });
         let sName = "สยาม (BTS)", eName = "รพ.จุฬาฯ", sCoord = null, eCoord = null, note = null;
-        if (from) { const g = await geocodeNominatim(from); if (g) { sCoord = g.coord; sName = g.name; } else note = `หา "${from}" ไม่เจอ ใช้จุดเริ่มต้นเดิม`; }
-        if (to) { const g = await geocodeNominatim(to); if (g) { eCoord = g.coord; eName = g.name; } else note = (note ? note + " · " : "") + `หา "${to}" ไม่เจอ ใช้ปลายทางเดิม`; }
+        const [gFrom, gTo] = await Promise.all([from ? geocodeNominatim(from) : null, to ? geocodeNominatim(to) : null]);
+        if (from) { if (gFrom) { sCoord = gFrom.coord; sName = gFrom.name; } else note = `หา "${from}" ไม่เจอ ใช้จุดเริ่มต้นเดิม`; }
+        if (to) { if (gTo) { eCoord = gTo.coord; eName = gTo.name; } else note = (note ? note + " · " : "") + `หา "${to}" ไม่เจอ ใช้ปลายทางเดิม`; }
         let data;
         try {
           const qs = new URLSearchParams();
@@ -212,13 +222,24 @@ export default function MapView({ apiRef }) {
         let lons = [], lats = []; routes.forEach((r) => r.coordinates.forEach(([lo, la]) => { lons.push(lo); lats.push(la); }));
         const within = Math.min(...lats) >= DEMO_BBOX[0] && Math.min(...lons) >= DEMO_BBOX[1] && Math.max(...lats) <= DEMO_BBOX[2] && Math.max(...lons) <= DEMO_BBOX[3];
         const mg = 0.004;
-        const osm = within ? await c.osmPromise : await fetchOSM([Math.min(...lats) - mg, Math.min(...lons) - mg, Math.max(...lats) + mg, Math.max(...lons) + mg]);
-        const scored = scoreRoutes(routes, osm, c.problems);
-        const best = scored.reduce((bi, r, i, a) => ((r.comfort ?? -1) > (a[bi].comfort ?? -1) ? i : bi), 0);
-        c.select(best);
-        if (mapRef.current) mapRef.current.fitBounds(polylines[best].getBounds().pad(0.15));
-        c.routeKey = key; c.best = best; c.scored = scored.map((r, i) => ({ ...r, recommended: i === best }));
-        setRouteData({ routes: scored, best, osmOk: osm.ok, startName: sName, endName: eName, note });
+        // คะแนนเร็ว: ความปลอดภัยจาก Traffy (โหลดไว้แล้ว) โชว์ทันที ไม่ต้องรอ OSM
+        const quick = scoreRoutes(routes, { ok: false, trees: [], green: [], toilets: [], cameras: [] }, c.problems);
+        const bestQ = quick.reduce((bi, r, i, a) => ((r.comfort ?? -1) > (a[bi].comfort ?? -1) ? i : bi), 0);
+        c.select(bestQ);
+        if (mapRef.current) mapRef.current.fitBounds(polylines[bestQ].getBounds().pad(0.15));
+        c.routeKey = key; c.best = bestQ; c.scored = quick.map((r, i) => ({ ...r, recommended: i === bestQ }));
+        setRouteData({ routes: quick, best: bestQ, osmOk: false, startName: sName, endName: eName, note, scoring: true });
+        // เติมคะแนนร่ม/สวน/ห้องน้ำจาก OSM ทีหลัง (ไม่บล็อกการตอบ)
+        const lo0 = Math.min(...lons), la0 = Math.min(...lats), lo1 = Math.max(...lons), la1 = Math.max(...lats);
+        (async () => {
+          const osm = within ? await c.osmPromise : await fetchOSM([la0 - mg, lo0 - mg, la1 + mg, lo1 + mg]);
+          if (c.routeKey !== key) return;
+          const full = scoreRoutes(routes, osm, c.problems);
+          const best = full.reduce((bi, r, i, a) => ((r.comfort ?? -1) > (a[bi].comfort ?? -1) ? i : bi), 0);
+          c.best = best; c.scored = full.map((r, i) => ({ ...r, recommended: i === best }));
+          c.select(best);
+          setRouteData({ routes: full, best, osmOk: osm.ok, startName: sName, endName: eName, note });
+        })();
         return c.scored;
       },
     };
@@ -335,9 +356,15 @@ export default function MapView({ apiRef }) {
 
       {routeData && !nav?.active ? (
         <div className="wb-card wb-route">
-          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>เส้นทางเดิน {routeData.startName || "สยาม"} → {routeData.endName || "จุฬาฯ"}</div>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 6 }}>{routeData.loading ? "กำลังหาเส้นทาง…" : `เส้นทางเดิน ${routeData.startName || "สยาม"} → ${routeData.endName || "จุฬาฯ"}`}</div>
           {routeData.loading ? <div style={{ fontSize: 13, color: "#888" }}>กำลังคำนวณเส้นทาง…</div> : routeData.error ? <div style={{ fontSize: 12, color: "#c1121f" }}>ใช้ไม่ได้: {routeData.error}</div> : (
             <div>
+              {navTarget != null ? (
+                <div style={{ marginBottom: 8 }}>
+                  <button className="wb-startbtn" onClick={() => startSim(navTarget)}>🧪 ทดลองเดิน (จำลอง)</button>
+                  <button className="wb-startbtn" style={{ background: "#1d6fb8", marginTop: 6 }} onClick={() => startNav(navTarget)}>▶ เริ่มนำทางจริง (GPS)</button>
+                </div>
+              ) : null}
               {routeData.routes.map((r) => (
                 <button key={r.index} onClick={() => ctx.current.select(r.index)}
                   style={{ display: "block", width: "100%", textAlign: "left", cursor: "pointer", margin: "5px 0", padding: "8px 10px", borderRadius: 8, fontSize: 13, border: active === r.index ? "2px solid #2a9d54" : "1px solid #ddd", background: active === r.index ? "#eaf7ee" : "white" }}>
@@ -350,12 +377,8 @@ export default function MapView({ apiRef }) {
                 </button>
               ))}
               {routeData.note ? <div style={{ fontSize: 11, color: "#b5651d", marginTop: 4 }}>{routeData.note}</div> : null}
-              {navTarget != null ? (
-                <>
-                  <button className="wb-startbtn" onClick={() => startNav(navTarget)}>▶ เริ่มนำทาง (GPS จริง)</button>
-                  <button className="wb-startbtn" style={{ background: "#2a9d54", marginTop: 6 }} onClick={() => startSim(navTarget)}>🧪 ทดลองเดิน (จำลอง)</button>
-                </>
-              ) : null}
+              {routeData.routes[0]?.timeMode ? <div style={{ fontSize: 11, color: "#555", marginTop: 4 }}>โหมดเวลา: {routeData.routes[0].timeMode}</div> : null}
+              {routeData.scoring ? <div style={{ fontSize: 11, color: "#888" }}>กำลังเติมคะแนนร่ม/สวน/ห้องน้ำ…</div> : null}
             </div>
           )}
         </div>
