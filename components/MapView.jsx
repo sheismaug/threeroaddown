@@ -37,6 +37,25 @@ function haversine(a, b) {
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
 }
+function bearing(a, b) {
+  const f1 = (a[1] * Math.PI) / 180, f2 = (b[1] * Math.PI) / 180, dl = ((b[0] - a[0]) * Math.PI) / 180;
+  const y = Math.sin(dl) * Math.cos(f2);
+  const x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+// ทิศเลี้ยว ณ จุด wp คำนวณจากมุมเปลี่ยนทิศของเส้นทาง (ซ้าย/ขวาจริงตามทิศเดิน)
+function turnTH(coords, wp) {
+  if (wp <= 0 || wp >= coords.length - 1) return null;
+  const bIn = bearing(coords[wp - 1], coords[wp]);
+  const bOut = bearing(coords[wp], coords[wp + 1]);
+  const d = ((bOut - bIn + 540) % 360) - 180; // + = ขวา, - = ซ้าย
+  const ad = Math.abs(d);
+  if (ad < 18) return "ตรงไป";
+  const side = d > 0 ? "ขวา" : "ซ้าย";
+  if (ad > 150) return "เลี้ยว" + side + "หักศอก";
+  if (ad > 55) return "เลี้ยว" + side;
+  return "เบี่ยง" + side;
+}
 function sampleLine(coords, stepM = 25) {
   const out = []; let carry = 0;
   for (let i = 0; i < coords.length - 1; i++) {
@@ -291,14 +310,20 @@ export default function MapView({ apiRef }) {
     let k = n.steps.findIndex((st) => idx <= st.wpEnd); if (k < 0) k = n.steps.length - 1;
     const cur = n.steps[k]; const nextTurn = n.steps[k + 1] || null;
     const distTurn = cur ? Math.max(0, Math.round(n.cum[cur.wpEnd] - n.cum[idx])) : 0;
-    const instr = nextTurn ? thaiInstr(nextTurn) : "ตรงไปยังปลายทาง";
+    let instr = "ตรงไปยังปลายทาง";
+    if (nextTurn) {
+      const t = turnTH(n.coords, cur.wpEnd) || (MAN[nextTurn.type] || "ไปต่อ");
+      instr = t + (nextTurn.name ? ` เข้า ${nextTurn.name}` : "");
+    }
     let hazard = null, hbest = Infinity, hid = null;
     for (const p of c.problems) {
       if (haversine(u, p.pt) > 80) continue;
       let pidx = 0, pbd = Infinity; for (let k2 = 0; k2 < n.coords.length; k2++) { const dd = haversine(p.pt, n.coords[k2]); if (dd < pbd) { pbd = dd; pidx = k2; } }
-      if (pbd > 35 || pidx < idx - 2) continue;
-      const along = Math.max(0, Math.round(n.cum[pidx] - n.cum[idx]));
-      if (along < hbest) { hbest = along; hazard = { label: CAT[p.cat]?.label || "จุดเสี่ยง", dist: along }; hid = p.pt.join(","); }
+      if (pbd > 22 || pidx < idx - 4) continue; // ต้องอยู่ในแนวทางเดินจริง (ตัดฝั่งตรงข้ามถนน)
+      const along = Math.round(n.cum[pidx] - n.cum[idx]);
+      if (along > 90) continue;
+      const near = Math.abs(along);
+      if (near < hbest) { hbest = near; hazard = { label: CAT[p.cat]?.label || "จุดเสี่ยง", dist: Math.max(0, along) }; hid = p.pt.join(","); }
     }
     const arrived = distDest < 20;
     setNav({ active: true, instr, distTurn, distDest, hazard, arrived });
