@@ -34,6 +34,7 @@ function speak(text, lang) {
     window.speechSynthesis.speak(u);
   } catch (e) {}
 }
+function speakNow(text, lang) { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {} speak(text, lang); }
 const TURN_EN = { "เลี้ยวซ้าย": "turn left", "เลี้ยวขวา": "turn right", "เบี่ยงซ้าย": "keep left", "เบี่ยงขวา": "keep right", "เลี้ยวซ้ายหักศอก": "sharp left turn", "เลี้ยวขวาหักศอก": "sharp right turn", "ตรงไป": "go straight", "กลับตัว": "make a U-turn" };
 
 function loadLeaflet() {
@@ -392,14 +393,14 @@ export default function MapView({ apiRef }) {
     if (c.voiceOn) {
       const rnd = (m) => Math.max(10, Math.round(m / 10) * 10);
       const en = lang === "en";
-      if (crossAhead && crossAhead.dist <= 30 && c.spokenCross && !c.spokenCross.has(crossAhead.id)) {
+      if (crossAhead && crossAhead.dist <= 35 && c.spokenCross && !c.spokenCross.has(crossAhead.id)) {
         c.spokenCross.add(crossAhead.id);
-        speak(en ? "Prepare to cross the road, watch for traffic" : "เตรียมข้ามถนน ระวังรถ", lang);
-      } else if (mWp != null && distTurn <= 45 && !c.spokenTurns.has(mWp)) {
+        speakNow(en ? "Prepare to cross the road, watch for traffic" : "เตรียมข้ามถนน ระวังรถ", lang);
+      } else if (mWp != null && distTurn <= 55 && !c.spokenTurns.has(mWp)) {
         c.spokenTurns.add(mWp);
         const m = rnd(distTurn);
-        if (distTurn <= 12) speak(instr, lang);
-        else speak(en ? `In ${m} meters, ${TURN_EN[mTurn] || "continue"}${mName ? " onto " + mName : ""}` : `ในอีก ${m} เมตร ${instr}`, lang);
+        if (distTurn <= 12) speakNow(instr, lang);
+        else speakNow(en ? `In ${m} meters, ${TURN_EN[mTurn] || "continue"}${mName ? " onto " + mName : ""}` : `ในอีก ${m} เมตร ${instr}`, lang);
       }
       if (hazard && hazard.dist < 50 && !c.spokenHaz.has(hid)) { c.spokenHaz.add(hid); speak(en ? "Caution, obstacle ahead" : `ระวัง ${hazard.label} ข้างหน้า`, lang); }
       if (arrived && !c.spokenArrived) { c.spokenArrived = true; speak(en ? "You have arrived" : "ถึงปลายทางแล้ว", lang); }
@@ -429,7 +430,7 @@ export default function MapView({ apiRef }) {
     setNav({ active: true, instr: "เริ่มเดิน (โหมดจำลอง)", distTurn: null, distDest: Math.round(cum[cum.length - 1]), hazard: null, arrived: false });
     let d = 0; const total = cum[cum.length - 1];
     c.simTimer = setInterval(() => {
-      d += 20; if (d > total) d = total;
+      d += 7; if (d > total) d = total;
       updateNav(pointAtDistance(coords, cum, d));
       if (d >= total) { clearInterval(c.simTimer); c.simTimer = null; }
     }, 650);
