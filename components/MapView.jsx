@@ -538,7 +538,7 @@ export default function MapView({ apiRef }) {
             <div>
               {navTarget != null ? (
                 <div style={{ marginBottom: 8 }}>
-                  <button className="wb-startbtn" style={{ background: "#6a4c93" }} onClick={() => { const r = ctx.current.scored?.[navTarget]; if (r) setNav3D({ route: r, problems: ctx.current.problems }); }}>🧭 นำทาง 3D (จำลอง)</button>
+                  <button className="wb-startbtn" style={{ background: "#6a4c93" }} onClick={() => { const r = ctx.current.scored?.[navTarget]; if (r) setNav3D({ route: r, problems: ctx.current.problems, destName: routeData?.endName || "ปลายทาง" }); }}>🧭 นำทาง 3D (จำลอง)</button>
                   <button className="wb-startbtn" style={{ marginTop: 6 }} onClick={() => startSim(navTarget)}>🧪 ทดลองเดิน 2D</button>
                   <button className="wb-startbtn" style={{ background: "#1d6fb8", marginTop: 6 }} onClick={() => startNav(navTarget)}>▶ นำทางจริง (GPS)</button>
                 </div>
@@ -570,7 +570,7 @@ export default function MapView({ apiRef }) {
         <Legend color="#0077b6" label="เสี่ยงน้ำท่วม (กทม.)" />
         <Legend color="#2a9d54" label="เส้นแนะนำ" />
       </div>
-      {nav3d ? <Nav3D route={nav3d.route} problems={nav3d.problems} onClose={() => setNav3D(null)} /> : null}
+      {nav3d ? <Nav3D route={nav3d.route} problems={nav3d.problems} destName={nav3d.destName} onClose={() => setNav3D(null)} /> : null}
     </div>
   );
 }
