@@ -36,7 +36,8 @@ export default function ChatBox({ mapApi }) {
     try {
       // สั่งแผนที่คำนวณ+โชว์เส้นทางก่อน แล้วเอาสรุปไปให้ผู้ช่วย
       let routes = null;
-      const mt = q.match(/จาก\s*(.+?)\s*(?:ไปยัง|ไปที่|ไป|->|→|สู่)\s*(.+?)[\s?]*$/);
+      let mt = q.match(/จาก\s*(.+?)\s*(?:ไปยัง|ไปที่|ไป|->|→|สู่|ถึง)\s*(.+?)[\s?]*$/);
+      if (!mt) mt = q.match(/^\s*(.{2,}?)\s*(?:->|→|ไปยัง|ไปที่|ไป|สู่|ถึง)\s*(.{2,}?)[\s?]*$/);
       const from = mt ? mt[1].trim() : null;
       const to = mt ? mt[2].trim() : null;
       try { routes = await mapApi?.current?.showRoutes?.(from, to); } catch (e) {}

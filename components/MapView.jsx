@@ -305,6 +305,8 @@ export default function MapView({ apiRef }) {
   const [voiceLang, setVoiceLang] = useState("th");
   const [nav3d, setNav3D] = useState(null);
   const [legendOpen, setLegendOpen] = useState(false);
+  const [sFrom, setSFrom] = useState("");
+  const [sTo, setSTo] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -524,6 +526,7 @@ export default function MapView({ apiRef }) {
 
   function toggleVoice() { const c = ctx.current; c.voiceOn = !c.voiceOn; setVoice(c.voiceOn); if (!c.voiceOn && window.speechSynthesis) window.speechSynthesis.cancel(); }
   function toggleVoiceLang() { const c = ctx.current; c.voiceLang = c.voiceLang === "en" ? "th" : "en"; setVoiceLang(c.voiceLang); }
+  function doSearch() { const f = sFrom.trim(), t = sTo.trim(); try { apiRef?.current?.showRoutes?.(f || null, t || null); } catch (e) {} }
 
   const navTarget = active ?? (routeData && !routeData.error && !routeData.loading ? routeData.best : null);
 
@@ -537,9 +540,11 @@ export default function MapView({ apiRef }) {
         .wb-nav{top:0;left:0;right:0;border-radius:0;background:#1d6fb8;color:#fff;padding:12px 16px;z-index:1600;}
         .wb-startbtn{display:block;width:100%;margin-top:8px;padding:10px;border:none;border-radius:8px;background:#1d6fb8;color:#fff;font-weight:800;font-size:15px;cursor:pointer;}
         .wb-legendtoggle{display:none;position:absolute;bottom:16px;left:12px;z-index:1100;background:#fff;border:1px solid #ddd;border-radius:20px;box-shadow:0 2px 8px rgba(0,0,0,.2);padding:7px 12px;font-size:13px;font-weight:700;cursor:pointer;}
+        .wb-search{top:12px;left:50%;transform:translateX(-50%);width:340px;padding:10px 12px;z-index:1250;}
         @media (max-width:640px){
-          .wb-info{max-width:54vw;padding:7px 9px;font-size:12px;top:8px;left:8px;}
-          .wb-route{width:auto;left:8px;right:8px;top:62px;bottom:auto;max-height:64vh;overflow:auto;z-index:1300;}
+          .wb-info{display:none;}
+          .wb-search{left:8px;right:8px;width:auto;transform:none;top:8px;padding:8px 9px;}
+          .wb-route{width:auto;left:8px;right:8px;top:172px;bottom:auto;max-height:52vh;overflow:auto;z-index:1300;}
           body.wb-chatopen .wb-route{display:none;}
           .wb-legend{display:none;bottom:58px;left:8px;font-size:11px;column-count:2;column-gap:10px;padding:8px 10px;max-width:82vw;z-index:1150;}
           .wb-legend.open{display:block;}
@@ -579,6 +584,16 @@ export default function MapView({ apiRef }) {
         <div style={{ fontSize: 13, marginTop: 6 }}>{info.loading ? "กำลังโหลด…" : `${info.count} จุด · Traffy ${info.source === "live" ? "(สด)" : "(cache)"}`}</div>
         {toilets != null ? <div style={{ fontSize: 13, color: "#444" }}>ห้องน้ำ {toilets} · กล้อง CCTV {cams ?? 0} (OSM)</div> : null}
       </div>
+
+      {!nav?.active ? (
+      <div className="wb-card wb-search">
+        <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>🔍 ค้นหาเส้นทางเดิน</div>
+        <input list="wb-places" value={sFrom} onChange={(e) => setSFrom(e.target.value)} placeholder="จาก (เช่น สนามกีฬาแห่งชาติ)" style={{ width: "100%", boxSizing: "border-box", padding: "9px 11px", borderRadius: 9, border: "1px solid #ccc", fontSize: 14, outline: "none" }} />
+        <input list="wb-places" value={sTo} onChange={(e) => setSTo(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") doSearch(); }} placeholder="ไป (เช่น รพ.จุฬาฯ)" style={{ width: "100%", boxSizing: "border-box", padding: "9px 11px", borderRadius: 9, border: "1px solid #ccc", fontSize: 14, outline: "none", marginTop: 6 }} />
+        <datalist id="wb-places">{LANDMARKS.map((l) => <option key={l.name} value={l.name} />)}</datalist>
+        <button onClick={doSearch} style={{ width: "100%", marginTop: 8, padding: "9px", border: "none", borderRadius: 9, background: "#2a9d54", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>ค้นหาเส้นทาง</button>
+      </div>
+      ) : null}
 
       {routeData && !nav?.active ? (
         <div className="wb-card wb-route">
