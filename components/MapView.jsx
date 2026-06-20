@@ -56,6 +56,30 @@ function turnTH(coords, wp) {
   if (ad > 55) return "เลี้ยว" + side;
   return "เบี่ยง" + side;
 }
+function walkFrom(coords, wp, dist, dir) {
+  let i = wp, acc = 0;
+  while (true) {
+    const j = i + dir;
+    if (j < 0 || j >= coords.length) return coords[i];
+    acc += haversine(coords[i], coords[j]);
+    i = j;
+    if (acc >= dist) return coords[i];
+  }
+}
+// ทิศเลี้ยวแบบมองช่วง ~18 ม. ก่อน/หลังจุดเลี้ยว (กันมุมสั่นจาก geometry ละเอียด)
+function turnAt(coords, wp) {
+  if (wp <= 0 || wp >= coords.length - 1) return null;
+  const back = walkFrom(coords, wp, 18, -1);
+  const fwd = walkFrom(coords, wp, 18, 1);
+  const d = ((bearing(coords[wp], fwd) - bearing(back, coords[wp]) + 540) % 360) - 180;
+  const ad = Math.abs(d);
+  if (ad < 20) return "ตรงไป";
+  const side = d > 0 ? "ขวา" : "ซ้าย";
+  if (ad > 150) return "กลับตัว";
+  if (ad > 115) return "เลี้ยว" + side + "หักศอก";
+  if (ad > 50) return "เลี้ยว" + side;
+  return "เบี่ยง" + side;
+}
 function sampleLine(coords, stepM = 25) {
   const out = []; let carry = 0;
   for (let i = 0; i < coords.length - 1; i++) {
@@ -80,6 +104,7 @@ function countNear(samples, pts, radiusM) {
   return count;
 }
 async function fetchOSM(bbox) {
+  const cacheKey = "osm:" + bbox.map((x) => Math.round(x * 1000)).join(",");
   const b = bbox.join(",");
   const q = `[out:json][timeout:25];(node["natural"="tree"](${b});node["amenity"="toilets"](${b});way["leisure"="park"](${b});way["landuse"="grass"](${b});way["natural"="water"](${b});way["natural"="wood"](${b});node["man_made"="surveillance"](${b}););out center;`;
   for (const url of OVERPASS_MIRRORS) {
@@ -98,9 +123,12 @@ async function fetchOSM(bbox) {
         else if (tg.building) buildings.push(pt);
         else if (tg.leisure === "park" || tg.landuse === "grass" || tg.natural === "wood" || tg.natural === "water") green.push(pt);
       }
-      return { trees, buildings, toilets, green, cameras, ok: true };
+      const out = { trees, buildings, toilets, green, cameras, ok: true };
+      try { if (toilets.length + trees.length + cameras.length > 0) localStorage.setItem(cacheKey, JSON.stringify({ trees, buildings, toilets, green, cameras })); } catch (e) {}
+      return out;
     } catch (e) { clearTimeout(t); continue; }
   }
+  try { const c = localStorage.getItem(cacheKey); if (c) { const o = JSON.parse(c); return { ...o, ok: true, cached: true }; } } catch (e) {}
   return { ok: false, trees: [], buildings: [], toilets: [], green: [], cameras: [] };
 }
 function timeWeights() {
@@ -181,13 +209,14 @@ function queuedGeocode(query) {
 export default function MapView({ apiRef }) {
   const mapEl = useRef(null);
   const mapRef = useRef(null);
-  const ctx = useRef({ L: null, routeLayer: null, problems: [], osmPromise: null, select: () => {}, scored: null });
+  const ctx = useRef({ L: null, routeLayer: null, problems: [], osmPromise: null, select: () => {}, scored: null, voiceOn: true });
   const [info, setInfo] = useState({ count: 0, source: "", loading: true });
   const [toilets, setToilets] = useState(null);
   const [cams, setCams] = useState(null);
   const [routeData, setRouteData] = useState(null);
   const [active, setActive] = useState(null);
   const [nav, setNav] = useState(null);
+  const [voice, setVoice] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -312,14 +341,14 @@ export default function MapView({ apiRef }) {
     const distTurn = cur ? Math.max(0, Math.round(n.cum[cur.wpEnd] - n.cum[idx])) : 0;
     let instr = "ตรงไปยังปลายทาง";
     if (nextTurn) {
-      const t = turnTH(n.coords, cur.wpEnd) || (MAN[nextTurn.type] || "ไปต่อ");
+      const t = turnAt(n.coords, cur.wpEnd) || (MAN[nextTurn.type] || "ไปต่อ");
       instr = t + (nextTurn.name ? ` เข้า ${nextTurn.name}` : "");
     }
     let hazard = null, hbest = Infinity, hid = null;
     for (const p of c.problems) {
       if (haversine(u, p.pt) > 80) continue;
       let pidx = 0, pbd = Infinity; for (let k2 = 0; k2 < n.coords.length; k2++) { const dd = haversine(p.pt, n.coords[k2]); if (dd < pbd) { pbd = dd; pidx = k2; } }
-      if (pbd > 22 || pidx < idx - 4) continue; // ต้องอยู่ในแนวทางเดินจริง (ตัดฝั่งตรงข้ามถนน)
+      if (pbd > 28 || pidx < idx - 4) continue; // ต้องอยู่ในแนวทางเดินจริง (ตัดฝั่งตรงข้ามถนน)
       const along = Math.round(n.cum[pidx] - n.cum[idx]);
       if (along > 90) continue;
       const near = Math.abs(along);
@@ -327,9 +356,15 @@ export default function MapView({ apiRef }) {
     }
     const arrived = distDest < 20;
     setNav({ active: true, instr, distTurn, distDest, hazard, arrived });
-    if (nextTurn && distTurn < 30 && !c.spokenTurns.has(k + 1)) { c.spokenTurns.add(k + 1); speak(`อีก ${distTurn} เมตร ${instr}`); }
-    if (hazard && hazard.dist < 60 && !c.spokenHaz.has(hid)) { c.spokenHaz.add(hid); speak(`ระวัง ${hazard.label} อีกประมาณ ${hazard.dist} เมตร`); }
-    if (arrived && !c.spokenArrived) { c.spokenArrived = true; speak("ถึงปลายทางแล้ว"); }
+    if (c.voiceOn) {
+      const rnd = (m) => Math.max(10, Math.round(m / 10) * 10);
+      if (nextTurn && distTurn <= 45 && !c.spokenTurns.has(k + 1)) {
+        c.spokenTurns.add(k + 1);
+        speak(distTurn <= 12 ? instr : `ในอีก ${rnd(distTurn)} เมตร ${instr}`);
+      }
+      if (hazard && hazard.dist < 50 && !c.spokenHaz.has(hid)) { c.spokenHaz.add(hid); speak(`ระวัง ${hazard.label} ข้างหน้า`); }
+      if (arrived && !c.spokenArrived) { c.spokenArrived = true; speak("ถึงปลายทางแล้ว"); }
+    }
   }
   function onPos(pos) { updateNav([pos.coords.longitude, pos.coords.latitude]); }
   function onErr() { setNav((p) => ({ ...(p || { active: true }), instr: "เปิด GPS ไม่สำเร็จ — อนุญาตตำแหน่ง แล้วเปิดเว็บแบบ HTTPS บนมือถือ", distTurn: null, distDest: null, hazard: null })); }
@@ -368,6 +403,8 @@ export default function MapView({ apiRef }) {
     c.nav = null; setNav(null);
   }
 
+  function toggleVoice() { const c = ctx.current; c.voiceOn = !c.voiceOn; setVoice(c.voiceOn); if (!c.voiceOn && window.speechSynthesis) window.speechSynthesis.cancel(); }
+
   const navTarget = active ?? (routeData && !routeData.error && !routeData.loading ? routeData.best : null);
 
   return (
@@ -402,7 +439,10 @@ export default function MapView({ apiRef }) {
               )}
               {nav.hazard ? <div style={{ marginTop: 6, background: "#c1121f", borderRadius: 6, padding: "5px 8px", fontWeight: 700, fontSize: 14 }}>⚠️ ระวัง {nav.hazard.label} อีก ~{nav.hazard.dist} ม.</div> : null}
             </div>
-            <button onClick={stopNav} style={{ background: "rgba(255,255,255,.25)", border: "none", color: "#fff", borderRadius: 8, padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}>หยุด</button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={toggleVoice} style={{ background: "rgba(255,255,255,.25)", border: "none", color: "#fff", borderRadius: 8, padding: "8px 11px", fontWeight: 700, cursor: "pointer", fontSize: 16 }}>{voice ? "🔊" : "🔇"}</button>
+              <button onClick={stopNav} style={{ background: "rgba(255,255,255,.25)", border: "none", color: "#fff", borderRadius: 8, padding: "8px 12px", fontWeight: 700, cursor: "pointer" }}>หยุด</button>
+            </div>
           </div>
         </div>
       ) : null}
