@@ -3,15 +3,15 @@
 import { useState, useRef, useEffect } from "react";
 
 const SUGGESTIONS = [
-  "แถวจุฬาฯ ทางเท้าเป็นยังไงบ้าง",
-  "ระวังจุดไหนเรื่องน้ำท่วม",
-  "มีปัญหาทางเท้าตรงสยามไหม",
+  "ตอนนี้กลางคืน เดินเส้นไหนปลอดภัยสุด",
+  "แถวสามย่านมีจุดเสี่ยงน้ำท่วมไหม",
+  "ทางเท้าจากสยามไปจุฬาเป็นยังไง",
 ];
 
 export default function ChatBox({ mapApi }) {
   const [open, setOpen] = useState(false);
   const [msgs, setMsgs] = useState([
-    { role: "bot", text: "สวัสดีค่ะ ถามได้เลยว่าย่านปทุมวันเดินตรงไหนต้องระวัง — ตอบจากข้อมูลร้องเรียนจริง" },
+    { role: "bot", text: "สวัสดีค่ะ ฉันคือ AI ผู้ช่วยเดิน (Typhoon ThaiLLM) ถามเรื่องความปลอดภัย จุดน้ำท่วม ทางเท้า หรือขอคำแนะนำเส้นทางได้เลย — ตอบจากข้อมูลร้องเรียนจริงย่านปทุมวัน" },
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -67,7 +67,7 @@ export default function ChatBox({ mapApi }) {
           boxShadow: "0 3px 10px rgba(0,0,0,.3)",
         }}
       >
-        💬 ถามเรื่องเดิน
+        🤖 ถาม AI ผู้ช่วย
       </button>
     );
   }
@@ -81,7 +81,7 @@ export default function ChatBox({ mapApi }) {
       }}
     >
       <div style={{ background: "#1d6fb8", color: "white", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <b>ผู้ช่วยเดินปทุมวัน (Typhoon)</b>
+        <b>🤖 AI ผู้ช่วยเดิน · Typhoon ThaiLLM</b>
         <span onClick={() => setOpen(false)} style={{ cursor: "pointer", fontSize: 18 }}>✕</span>
       </div>
 
@@ -119,7 +119,7 @@ export default function ChatBox({ mapApi }) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") send(); }}
-          placeholder="พิมพ์คำถาม…"
+          placeholder="ถาม เช่น เส้นไหนปลอดภัยสุด…"
           style={{ flex: 1, padding: "9px 11px", borderRadius: 10, border: "1px solid #ccc", fontSize: 14, outline: "none" }}
         />
         <button onClick={() => send()} disabled={busy}
