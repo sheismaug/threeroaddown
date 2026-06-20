@@ -470,6 +470,7 @@ export default function MapView({ apiRef }) {
         })();
         return c.scored;
       },
+      getRoutes: () => ctx.current.scored,
     };
   }, [apiRef]);
 

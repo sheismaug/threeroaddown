@@ -40,7 +40,12 @@ export default function ChatBox({ mapApi }) {
       if (!mt) mt = q.match(/^\s*(.{2,}?)\s*(?:->|→|ไปยัง|ไปที่|ไป|สู่|ถึง)\s*(.{2,}?)[\s?]*$/);
       const from = mt ? mt[1].trim() : null;
       const to = mt ? mt[2].trim() : null;
-      try { routes = await mapApi?.current?.showRoutes?.(from, to); } catch (e) {}
+      // ถามเป็นคำถามทั่วไป (ไม่มีจาก/ไป) → ใช้เส้นทางที่กำลังแสดงอยู่ ไม่คำนวณใหม่/ไม่รีเซ็ตเป็นเส้น default
+      if (from && to) {
+        try { routes = await mapApi?.current?.showRoutes?.(from, to); } catch (e) {}
+      } else {
+        try { routes = mapApi?.current?.getRoutes?.() || null; } catch (e) {}
+      }
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
