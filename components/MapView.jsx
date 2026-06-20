@@ -98,12 +98,14 @@ function scoreRoutes(routes, osm, problems) {
   const allHaz = problems.map((p) => p.pt);
   const floodPts = problems.filter((p) => p.cat === "flood").map((p) => p.pt);
   const darkPts = problems.filter((p) => p.cat === "light").map((p) => p.pt);
+  const floodRiskPts = problems.filter((p) => p.cat === "flood_risk").map((p) => p.pt);
   return routes.map((r) => {
     const samples = sampleLine(r.coordinates, 25);
     const hazards = countNear(samples, allHaz, 30);
     const cams = countNear(samples, osm.cameras, 40);
     const floodN = countNear(samples, floodPts, 30);
     const darkN = countNear(samples, darkPts, 30);
+    const floodRiskN = countNear(samples, floodRiskPts, 45);
     const shadeR = ratioNear(samples, shadePts, 25);
     const greenR = ratioNear(samples, osm.green, 40);
     const toiletsN = countNear(samples, toiletPts, 150);
@@ -115,7 +117,7 @@ function scoreRoutes(routes, osm, problems) {
     let num = 0, den = 0; const add = (v, w) => { if (v != null) { num += v * w; den += w; } };
     add(safe, WT.safe); add(shade, WT.shade); add(green, WT.green); add(toilet, WT.toilet);
     const comfort = den ? Math.round(num / den) : null;
-    return { ...r, hazards, cameras: cams, floodN, darkN, safe, shade, green, toilet, toiletsNear: toiletsN, comfort, timeMode: WT.mode };
+    return { ...r, hazards, cameras: cams, floodN, darkN, floodRiskN, safe, shade, green, toilet, toiletsNear: toiletsN, comfort, timeMode: WT.mode };
   });
 }
 function comfortColor(v) { if (v == null) return "#888"; if (v >= 70) return "#2a9d54"; if (v >= 45) return "#e9a23b"; return "#c1121f"; }
@@ -142,6 +144,21 @@ function pointAtDistance(coords, cum, d) {
   return [coords[k][0] + (coords[k + 1][0] - coords[k][0]) * t, coords[k][1] + (coords[k + 1][1] - coords[k][1]) * t];
 }
 
+let _gcChain = Promise.resolve();
+function queuedGeocode(query) {
+  const key = "fg:" + query;
+  try { const c = localStorage.getItem(key); if (c) return Promise.resolve(JSON.parse(c)); } catch (e) {}
+  const run = async () => {
+    await new Promise((r) => setTimeout(r, 1100)); // เคารพ rate limit Nominatim
+    const g = await geocodeNominatim(query);
+    try { if (g) localStorage.setItem(key, JSON.stringify(g)); } catch (e) {}
+    return g;
+  };
+  const pr = _gcChain.then(run, run);
+  _gcChain = pr.catch(() => {});
+  return pr;
+}
+
 export default function MapView({ apiRef }) {
   const mapEl = useRef(null);
   const mapRef = useRef(null);
@@ -165,9 +182,10 @@ export default function MapView({ apiRef }) {
       const problemsLayer = L.layerGroup().addTo(map);
       const toiletsLayer = L.layerGroup().addTo(map);
       const cctvLayer = L.layerGroup().addTo(map);
+      const floodRiskLayer = L.layerGroup().addTo(map);
       const routeLayer = L.layerGroup().addTo(map);
       ctx.current.routeLayer = routeLayer;
-      L.control.layers(null, { "เส้นทางเดิน": routeLayer, "จุดร้องเรียน (Traffy)": problemsLayer, "ห้องน้ำ (OSM)": toiletsLayer, "กล้อง CCTV (OSM)": cctvLayer }, { collapsed: true }).addTo(map);
+      L.control.layers(null, { "เส้นทางเดิน": routeLayer, "จุดร้องเรียน (Traffy)": problemsLayer, "เสี่ยงน้ำท่วม กทม.": floodRiskLayer, "ห้องน้ำ (OSM)": toiletsLayer, "กล้อง CCTV (OSM)": cctvLayer }, { collapsed: true }).addTo(map);
       const toiletIcon = L.divIcon({ className: "", html: '<div style="font-size:12px;line-height:18px;background:#2a9d8f;color:white;border-radius:50%;width:18px;height:18px;text-align:center;font-weight:700">W</div>', iconSize: [18, 18], iconAnchor: [9, 9] });
       const camIcon = L.divIcon({ className: "", html: '<div style="font-size:11px;line-height:18px;background:#1b998b;color:white;border-radius:3px;width:18px;height:18px;text-align:center;font-weight:700">C</div>', iconSize: [18, 18], iconAnchor: [9, 9] });
 
@@ -188,6 +206,23 @@ export default function MapView({ apiRef }) {
         setToilets(osm.toilets.length); setCams(osm.cameras.length);
         return osm;
       });
+
+      // จุดเสี่ยงน้ำท่วม กทม. (สนน. 2566) — geocode ฝั่งเบราว์เซอร์ + cache
+      (async () => {
+        try {
+          const res = await fetch("/api/floodrisk");
+          const data = await res.json();
+          const fIcon = L.divIcon({ className: "", html: '<div style="width:15px;height:15px;background:#0077b6;border:2px solid #fff;transform:rotate(45deg);box-shadow:0 0 3px rgba(0,0,0,.5)"></div>', iconSize: [15, 15], iconAnchor: [8, 8] });
+          for (const row of data.rows || []) {
+            const g = await queuedGeocode(row.query);
+            if (cancelled) return;
+            if (!g || !g.coord) continue;
+            const [lon, lat] = g.coord;
+            ctx.current.problems.push({ pt: [lon, lat], cat: "flood_risk" });
+            L.marker([lat, lon], { icon: fIcon }).bindPopup('<b>จุดเสี่ยงน้ำท่วม (กทม.)</b><br/>' + row.area + '<br/><span style="font-size:11px;color:#888">' + row.district + ' · สนน. ปี 2566</span>').addTo(floodRiskLayer);
+          }
+        } catch (e) {}
+      })();
     })();
     return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
   }, []);
@@ -374,6 +409,7 @@ export default function MapView({ apiRef }) {
                   </div>
                   <div style={{ color: "#555" }}>{(r.distance_m / 1000).toFixed(2)} กม. · {r.duration_min} นาที</div>
                   <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>ปลอดภัย {r.safe}{r.shade != null ? ` · ร่ม ${r.shade}` : ""}{r.green != null ? ` · สวน ${r.green}` : ""}{r.toiletsNear != null ? ` · ห้องน้ำ ${r.toiletsNear}` : ""}</div>
+                  {r.floodRiskN > 0 ? <div style={{ fontSize: 11, color: "#0077b6", fontWeight: 700 }}>เสี่ยงน้ำท่วม {r.floodRiskN} จุด (กทม.)</div> : null}
                 </button>
               ))}
               {routeData.note ? <div style={{ fontSize: 11, color: "#b5651d", marginTop: 4 }}>{routeData.note}</div> : null}
@@ -388,6 +424,7 @@ export default function MapView({ apiRef }) {
         {Object.values(CAT).map((c) => <Legend key={c.label} color={c.color} label={c.label} />)}
         <Legend color="#2a9d8f" label="ห้องน้ำ (W)" />
         <Legend color="#1b998b" label="กล้อง CCTV (C)" />
+        <Legend color="#0077b6" label="เสี่ยงน้ำท่วม (กทม.)" />
         <Legend color="#2a9d54" label="เส้นแนะนำ" />
       </div>
     </div>
