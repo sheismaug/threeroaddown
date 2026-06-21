@@ -165,6 +165,80 @@ function countNear(samples, pts, radiusM) {
   for (const p of pts) { const degLon = radiusM / (111000 * Math.cos((p[1] * Math.PI) / 180)); for (const s of samples) { if (Math.abs(p[1] - s[1]) > degLat || Math.abs(p[0] - s[0]) > degLon) continue; if (haversine(p, s) <= radiusM) { count++; break; } } }
   return count;
 }
+// ── เฟส "ร่มสมจริง": ตำแหน่งดวงอาทิตย์ + ฝั่งเงา ──────────────────────────────
+// คืน { azimuth: องศาเข็มทิศจากเหนือ-ตามเข็ม (ทิศที่ดวงอาทิตย์อยู่), elevation: องศาเหนือขอบฟ้า }
+// อัลกอริทึมแบบ SunCalc (ไม่พึ่ง lib ภายนอก → ไม่ต้อง npm install / ตั้ง env เพิ่ม)
+function sunPosition(date, lat, lon) {
+  const rad = Math.PI / 180, dayMs = 86400000, J1970 = 2440588, J2000 = 2451545;
+  const d = date.valueOf() / dayMs - 0.5 + J1970 - J2000; // วันนับจาก J2000
+  const M = rad * (357.5291 + 0.98560028 * d);            // mean anomaly
+  const C = rad * (1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M) + 0.0003 * Math.sin(3 * M));
+  const L = M + C + rad * 102.9372 + Math.PI;             // ecliptic longitude
+  const e = rad * 23.4397;                                // obliquity
+  const dec = Math.asin(Math.sin(L) * Math.sin(e));
+  const ra = Math.atan2(Math.sin(L) * Math.cos(e), Math.cos(L));
+  const phi = rad * lat, lw = rad * -lon;
+  const H = rad * (280.16 + 360.9856235 * d) - lw - ra;   // hour angle
+  const alt = Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(H));
+  const az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(phi) - Math.tan(dec) * Math.cos(phi)); // 0=ใต้
+  let deg = ((az + Math.PI) * 180) / Math.PI % 360; if (deg < 0) deg += 360;
+  return { azimuth: deg, elevation: (alt * 180) / Math.PI };
+}
+// ระยะจากจุด p ถึงเส้นตรง a-b (เมตร, ประมาณด้วย equirectangular ในระยะสั้น)
+function pointToSegM(p, a, b) {
+  const latR = (p[1] * Math.PI) / 180, kx = 111320 * Math.cos(latR), ky = 110540;
+  const px = p[0] * kx, py = p[1] * ky, ax = a[0] * kx, ay = a[1] * ky, bx = b[0] * kx, by = b[1] * ky;
+  const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+  let t = L2 ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx, cy = ay + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
+function nearPolyline(p, line, radiusM) {
+  for (let i = 0; i < line.length - 1; i++) if (pointToSegM(p, line[i], line[i + 1]) <= radiusM) return true;
+  return false;
+}
+// อยู่ใต้ทางมีหลังคา/skywalk ไหม → ถือว่าร่ม 100%
+function underCovered(p, coveredWays, radiusM) {
+  if (!coveredWays) return false;
+  for (const line of coveredWays) if (line.length >= 2 && nearPolyline(p, line, radiusM)) return true;
+  return false;
+}
+// ผลต่างมุมเชิงมุม (0..180)
+function angDiff(a, b) { let d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; }
+// มีต้นไม้/แนวต้นไม้อยู่ "ฝั่งที่บังแดด" (ระหว่างจุดกับดวงอาทิตย์) ไหม
+// sunAz = ทิศที่ดวงอาทิตย์อยู่ · วัตถุจะบังแดดเมื่ออยู่ในทิศเข้าหาดวงอาทิตย์ (cone ±60° — เผื่อความกว้างพุ่มไม้/การเดินเซ, แต่ตัดต้นไม้ที่อยู่ตั้งฉากออก)
+const SHADE_CONE = 60;
+function shadedBySun(p, trees, treeRows, radiusM, sunAz, lowSun) {
+  const degLat = radiusM / 111000, degLon = radiusM / (111000 * Math.cos((p[1] * Math.PI) / 180));
+  for (const t of (trees || [])) {
+    if (Math.abs(t[1] - p[1]) > degLat || Math.abs(t[0] - p[0]) > degLon) continue;
+    if (haversine(p, t) > radiusM) continue;
+    if (lowSun || angDiff(bearing(p, t), sunAz) <= SHADE_CONE) return true; // กลางคืน/ดวงอาทิตย์ต่ำ: นับใกล้พอ
+  }
+  for (const line of (treeRows || [])) {
+    if (line.length >= 2 && nearPolyline(p, line, radiusM)) {
+      if (lowSun) return true;
+      // เช็คฝั่ง: ใช้จุดบนแนวที่ใกล้สุดเป็นตัวแทนทิศ
+      let bj = line[0], bd = Infinity;
+      for (const q of line) { const dd = haversine(p, q); if (dd < bd) { bd = dd; bj = q; } }
+      if (angDiff(bearing(p, bj), sunAz) <= SHADE_CONE) return true;
+    }
+  }
+  return false;
+}
+// สัดส่วนจุดบนเส้นทางที่ "ร่ม" (ใต้หลังคา หรือ มีต้นไม้ฝั่งบังแดด) — คืน null ถ้าไม่มีข้อมูลร่มเลย
+function shadeRatio(samples, osm, sun) {
+  const trees = osm.trees || [], treeRows = osm.treeRows || [], covered = osm.coveredWays || [];
+  if (!trees.length && !treeRows.length && !covered.length) return null;
+  if (!samples.length) return null;
+  const lowSun = !sun || sun.elevation <= 5; // ดวงอาทิตย์ต่ำ/ลับขอบฟ้า → ไม่เน้นทิศ
+  const sunAz = sun ? sun.azimuth : 0;
+  let hit = 0;
+  for (const s of samples) {
+    if (underCovered(s, covered, 14) || shadedBySun(s, trees, treeRows, 25, sunAz, lowSun)) hit++;
+  }
+  return hit / samples.length;
+}
 async function fetchOSM(bbox) {
   const cacheKey = "osm:" + bbox.map((x) => Math.round(x * 1000)).join(",");
   const b = bbox.join(",");
@@ -174,23 +248,31 @@ async function fetchOSM(bbox) {
     if (res.ok) {
       const o = await res.json();
       if (o && o.ok) {
-        try { localStorage.setItem(cacheKey, JSON.stringify({ trees: o.trees, buildings: o.buildings, toilets: o.toilets, green: o.green, cameras: o.cameras, crossings: o.crossings })); } catch (e) {}
-        return { ...o, ok: true };
+        try { localStorage.setItem(cacheKey, JSON.stringify({ trees: o.trees, buildings: o.buildings, toilets: o.toilets, green: o.green, cameras: o.cameras, crossings: o.crossings, treeRows: o.treeRows || [], coveredWays: o.coveredWays || [] })); } catch (e) {}
+        return { ...o, treeRows: o.treeRows || [], coveredWays: o.coveredWays || [], ok: true };
       }
     }
   } catch (e) {}
   // 2) สำรอง: ดึง Overpass ตรงจากเบราว์เซอร์
-  const q = `[out:json][timeout:25];(node["natural"="tree"](${b});node["amenity"="toilets"](${b});way["leisure"="park"](${b});way["landuse"="grass"](${b});way["natural"="water"](${b});way["natural"="wood"](${b});node["man_made"="surveillance"](${b});node["highway"="crossing"](${b}););out center;`;
+  const q = `[out:json][timeout:25];(node["natural"="tree"](${b});node["amenity"="toilets"](${b});way["leisure"="park"](${b});way["landuse"="grass"](${b});way["natural"="water"](${b});way["natural"="wood"](${b});node["man_made"="surveillance"](${b});node["highway"="crossing"](${b}););out center;(way["natural"="tree_row"](${b});way["highway"]["covered"~"yes|arcade"](${b});way["highway"="footway"]["bridge"](${b});way["man_made"="bridge"](${b}););out geom;`;
   for (const url of OVERPASS_MIRRORS) {
     const controller = new AbortController(); const t = setTimeout(() => controller.abort(), 25000);
     try {
       const res = await fetch(url, { method: "POST", body: "data=" + encodeURIComponent(q), headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: controller.signal });
       clearTimeout(t); if (!res.ok) continue;
       const json = await res.json();
-      const trees = [], buildings = [], toilets = [], green = [], cameras = [], crossings = [];
+      const trees = [], buildings = [], toilets = [], green = [], cameras = [], crossings = [], treeRows = [], coveredWays = [];
       for (const el of json.elements || []) {
+        const tg = el.tags || {};
+        if (el.type === "way" && Array.isArray(el.geometry)) {
+          const line = el.geometry.map((g) => [g.lon, g.lat]).filter((p) => p[0] != null && p[1] != null);
+          if (line.length < 2) continue;
+          if (tg.natural === "tree_row") treeRows.push(line);
+          else if (tg.covered === "yes" || tg.covered === "arcade" || tg.bridge || tg.man_made === "bridge") coveredWays.push(line);
+          continue;
+        }
         const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon; if (lat == null || lon == null) continue;
-        const pt = [lon, lat], tg = el.tags || {};
+        const pt = [lon, lat];
         if (tg.highway === "crossing") crossings.push(pt);
         else if (tg.man_made === "surveillance") cameras.push(pt);
         else if (tg.natural === "tree") { trees.push(pt); green.push(pt); }
@@ -198,8 +280,8 @@ async function fetchOSM(bbox) {
         else if (tg.building) buildings.push(pt);
         else if (tg.leisure === "park" || tg.landuse === "grass" || tg.natural === "wood" || tg.natural === "water") green.push(pt);
       }
-      const out = { trees, buildings, toilets, green, cameras, crossings, ok: true };
-      try { if (toilets.length + trees.length + cameras.length + crossings.length > 0) localStorage.setItem(cacheKey, JSON.stringify({ trees, buildings, toilets, green, cameras, crossings })); } catch (e) {}
+      const out = { trees, buildings, toilets, green, cameras, crossings, treeRows, coveredWays, ok: true };
+      try { if (toilets.length + trees.length + cameras.length + crossings.length > 0) localStorage.setItem(cacheKey, JSON.stringify({ trees, buildings, toilets, green, cameras, crossings, treeRows, coveredWays })); } catch (e) {}
       return out;
     } catch (e) { clearTimeout(t); continue; }
   }
@@ -215,7 +297,9 @@ function timeWeights() {
 }
 function scoreRoutes(routes, osm, problems) {
   const WT = timeWeights();
-  const shadePts = osm.trees;
+  // ตำแหน่งดวงอาทิตย์ ณ เวลานี้ (ใช้จุดอ้างอิงกลางย่าน — แดดแทบไม่ต่างในกรอบ demo)
+  const ref = (routes[0] && routes[0].coordinates && routes[0].coordinates[0]) || [100.534, 13.737];
+  const sun = sunPosition(new Date(), ref[1], ref[0]);
   const toiletPts = osm.toilets.map((t) => t.pt);
   const allHaz = problems.map((p) => p.pt);
   const floodPts = problems.filter((p) => p.cat === "flood").map((p) => p.pt);
@@ -228,7 +312,7 @@ function scoreRoutes(routes, osm, problems) {
     const floodN = countNear(samples, floodPts, 30);
     const darkN = countNear(samples, darkPts, 30);
     const floodRiskN = countNear(samples, floodRiskPts, 45);
-    const shadeR = ratioNear(samples, shadePts, 25);
+    const shadeR = shadeRatio(samples, osm, sun); // ร่ม = ใต้หลังคา/skywalk หรือ ต้นไม้ฝั่งบังแดด ณ เวลานั้น
     const greenR = ratioNear(samples, osm.green, 40);
     const toiletsN = countNear(samples, toiletPts, 150);
     const hazAdj = hazards + (WT.night ? darkN * 1.5 : 0); // กลางคืน จุดมืดอันตรายกว่า

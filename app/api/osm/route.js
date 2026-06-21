@@ -9,7 +9,8 @@ const DEFAULT_BBOX = [13.724, 100.527, 13.751, 100.542]; // south,west,north,eas
 
 function buildQuery(b) {
   const bb = b.join(",");
-  return `[out:json][timeout:25];(node["natural"="tree"](${bb});node["amenity"="toilets"](${bb});way["amenity"="toilets"](${bb});way["leisure"="park"](${bb});way["landuse"="grass"](${bb});way["natural"="water"](${bb});way["natural"="wood"](${bb});node["man_made"="surveillance"](${bb});node["highway"="crossing"](${bb}););out center;`;
+  // ชุดที่ 1 (จุด/พื้นที่) -> out center · ชุดที่ 2 (เส้นร่ม: ทางมีหลังคา/skywalk/แนวต้นไม้) -> out geom (ต้องใช้ geometry คำนวณฝั่งเงา)
+  return `[out:json][timeout:25];(node["natural"="tree"](${bb});node["amenity"="toilets"](${bb});way["amenity"="toilets"](${bb});way["leisure"="park"](${bb});way["landuse"="grass"](${bb});way["natural"="water"](${bb});way["natural"="wood"](${bb});node["man_made"="surveillance"](${bb});node["highway"="crossing"](${bb}););out center;(way["natural"="tree_row"](${bb});way["highway"]["covered"~"yes|arcade"](${bb});way["highway"="footway"]["bridge"](${bb});way["man_made"="bridge"](${bb}););out geom;`;
 }
 
 async function fetchOverpass(query) {
@@ -44,13 +45,22 @@ export async function GET(req) {
   }
   const json = await fetchOverpass(buildQuery(bbox));
   if (!json) {
-    return Response.json({ ok: false, trees: [], buildings: [], toilets: [], green: [], cameras: [], crossings: [], error: "overpass ไม่ตอบ" });
+    return Response.json({ ok: false, trees: [], buildings: [], toilets: [], green: [], cameras: [], crossings: [], treeRows: [], coveredWays: [], error: "overpass ไม่ตอบ" });
   }
-  const trees = [], buildings = [], toilets = [], green = [], cameras = [], crossings = [];
+  const trees = [], buildings = [], toilets = [], green = [], cameras = [], crossings = [], treeRows = [], coveredWays = [];
   for (const el of json.elements || []) {
+    const tg = el.tags || {};
+    // เส้น (out geom): แนวต้นไม้ / ทางมีหลังคา-skywalk → เก็บเป็น polyline [[lon,lat],...]
+    if (el.type === "way" && Array.isArray(el.geometry)) {
+      const line = el.geometry.map((g) => [g.lon, g.lat]).filter((p) => p[0] != null && p[1] != null);
+      if (line.length < 2) continue;
+      if (tg.natural === "tree_row") treeRows.push(line);
+      else if (tg.covered === "yes" || tg.covered === "arcade" || tg.bridge || tg.man_made === "bridge") coveredWays.push(line);
+      continue;
+    }
     const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
     if (lat == null || lon == null) continue;
-    const pt = [lon, lat], tg = el.tags || {};
+    const pt = [lon, lat];
     if (tg.highway === "crossing") crossings.push(pt);
     else if (tg.man_made === "surveillance") cameras.push(pt);
     else if (tg.natural === "tree") { trees.push(pt); green.push(pt); }
@@ -59,7 +69,7 @@ export async function GET(req) {
     else if (tg.leisure === "park" || tg.landuse === "grass" || tg.natural === "wood" || tg.natural === "water") green.push(pt);
   }
   return Response.json(
-    { ok: true, trees, buildings, toilets, green, cameras, crossings, count: { toilets: toilets.length, cameras: cameras.length, crossings: crossings.length, trees: trees.length } },
+    { ok: true, trees, buildings, toilets, green, cameras, crossings, treeRows, coveredWays, count: { toilets: toilets.length, cameras: cameras.length, crossings: crossings.length, trees: trees.length, treeRows: treeRows.length, coveredWays: coveredWays.length } },
     { headers: { "Cache-Control": "s-maxage=3600, stale-while-revalidate=86400" } }
   );
 }
