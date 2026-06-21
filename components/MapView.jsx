@@ -249,7 +249,14 @@ function scoreRoutes(routes, osm, problems) {
       if (bd <= 120) toiletList.push({ name: (t.tags && (t.tags.name || t.tags["name:th"])) || "ห้องน้ำสาธารณะ", along: Math.round(rcum[bi]), off: Math.round(bd), road: stepRoad(bi), pt: t.pt });
     }
     toiletList.sort((a, b) => a.along - b.along);
-    return { ...r, hazards, cameras: cams, floodN, darkN, floodRiskN, safe, shade, green, toilet, toiletsNear: toiletsN, comfort, timeMode: WT.mode, night: WT.night, toiletList: toiletList.slice(0, 8) };
+    // จุดกล้อง CCTV ใกล้เส้นทาง (≤50 ม.) — ใช้โชว์หมุดในโหมดนำทาง 3D
+    const cameraList = [];
+    for (const cpt of (osm.cameras || [])) {
+      let cbd = Infinity;
+      for (let i = 0; i < r.coordinates.length; i++) { const dd = haversine(cpt, r.coordinates[i]); if (dd < cbd) cbd = dd; }
+      if (cbd <= 50) cameraList.push(cpt);
+    }
+    return { ...r, hazards, cameras: cams, floodN, darkN, floodRiskN, safe, shade, green, toilet, toiletsNear: toiletsN, comfort, timeMode: WT.mode, night: WT.night, toiletList: toiletList.slice(0, 8), cameraList: cameraList.slice(0, 20) };
   });
 }
 function comfortColor(v) { if (v == null) return "#888"; if (v >= 70) return "#2a9d54"; if (v >= 45) return "#e9a23b"; return "#c1121f"; }
