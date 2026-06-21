@@ -246,7 +246,7 @@ function scoreRoutes(routes, osm, problems) {
     for (const t of (osm.toilets || [])) {
       let bi = 0, bd = Infinity;
       for (let i = 0; i < r.coordinates.length; i++) { const dd = haversine(t.pt, r.coordinates[i]); if (dd < bd) { bd = dd; bi = i; } }
-      if (bd <= 150) toiletList.push({ name: (t.tags && (t.tags.name || t.tags["name:th"])) || "ห้องน้ำสาธารณะ", along: Math.round(rcum[bi]), off: Math.round(bd), road: stepRoad(bi), pt: t.pt });
+      if (bd <= 120) toiletList.push({ name: (t.tags && (t.tags.name || t.tags["name:th"])) || "ห้องน้ำสาธารณะ", along: Math.round(rcum[bi]), off: Math.round(bd), road: stepRoad(bi), pt: t.pt });
     }
     toiletList.sort((a, b) => a.along - b.along);
     return { ...r, hazards, cameras: cams, floodN, darkN, floodRiskN, safe, shade, green, toilet, toiletsNear: toiletsN, comfort, timeMode: WT.mode, toiletList: toiletList.slice(0, 8) };
@@ -455,6 +455,15 @@ export default function MapView({ apiRef }) {
       L.control.layers(null, { "เส้นทางเดิน": routeLayer, "จุดร้องเรียน (Traffy)": problemsLayer, "เสี่ยงน้ำท่วม กทม.": floodRiskLayer, "ห้องน้ำ (OSM)": toiletsLayer, "กล้อง CCTV (OSM)": cctvLayer }, { collapsed: true }).addTo(map);
       const toiletIcon = L.divIcon({ className: "", html: '<div style="font-size:12px;line-height:18px;background:#2a9d8f;color:white;border-radius:50%;width:18px;height:18px;text-align:center;font-weight:700">W</div>', iconSize: [18, 18], iconAnchor: [9, 9] });
       const camIcon = L.divIcon({ className: "", html: '<div style="font-size:11px;line-height:18px;background:#1b998b;color:white;border-radius:3px;width:18px;height:18px;text-align:center;font-weight:700">C</div>', iconSize: [18, 18], iconAnchor: [9, 9] });
+      // วาดหมุดห้องน้ำ/กล้องแบบกันซ้ำ — ใช้ทั้งตอนโหลดย่าน demo และตอนค้นเส้นทางที่ออกนอกย่าน
+      // เพื่อให้ "หมุด W บนแผนที่" ตรงกับ "ห้องน้ำที่ AI ตอบ" (ก่อนหน้านี้คนละชุดข้อมูลเลยไม่สัมพันธ์กัน)
+      ctx.current.toiletSeen = new Set(); ctx.current.camSeen = new Set();
+      ctx.current.addOsmMarkers = (osm) => {
+        if (!osm) return;
+        for (const t of (osm.toilets || [])) { const [lon, lat] = t.pt; const k = lon.toFixed(5) + "," + lat.toFixed(5); if (ctx.current.toiletSeen.has(k)) continue; ctx.current.toiletSeen.add(k); const name = t.tags?.name || t.tags?.["name:th"] || "ห้องน้ำสาธารณะ"; L.marker([lat, lon], { icon: toiletIcon }).bindPopup(`<b>ห้องน้ำ: ${name}</b>`).addTo(toiletsLayer); }
+        for (const cpt of (osm.cameras || [])) { const [lon, lat] = cpt; const k = lon.toFixed(5) + "," + lat.toFixed(5); if (ctx.current.camSeen.has(k)) continue; ctx.current.camSeen.add(k); L.marker([lat, lon], { icon: camIcon }).bindPopup("กล้อง CCTV (OSM)").addTo(cctvLayer); }
+        setToilets(ctx.current.toiletSeen.size); setCams(ctx.current.camSeen.size);
+      };
 
       try {
         const res = await fetch("/api/traffy"); const data = await res.json();
@@ -468,9 +477,7 @@ export default function MapView({ apiRef }) {
 
       ctx.current.osmPromise = fetchOSM(DEMO_BBOX).then((osm) => {
         if (cancelled) return osm;
-        for (const t of osm.toilets) { const [lon, lat] = t.pt; const name = t.tags?.name || t.tags?.["name:th"] || "ห้องน้ำสาธารณะ"; L.marker([lat, lon], { icon: toiletIcon }).bindPopup(`<b>ห้องน้ำ: ${name}</b>`).addTo(toiletsLayer); }
-        for (const c of osm.cameras) { const [lon, lat] = c; L.marker([lat, lon], { icon: camIcon }).bindPopup("กล้อง CCTV (OSM)").addTo(cctvLayer); }
-        setToilets(osm.toilets.length); setCams(osm.cameras.length); ctx.current.crossings = osm.crossings || [];
+        ctx.current.addOsmMarkers(osm); ctx.current.crossings = osm.crossings || [];
         return osm;
       });
 
@@ -538,6 +545,7 @@ export default function MapView({ apiRef }) {
           const osm = within ? await c.osmPromise : await fetchOSM([la0 - mg, lo0 - mg, la1 + mg, lo1 + mg]);
           if (c.routeKey !== key) return;
           if (osm.crossings && osm.crossings.length) c.crossings = osm.crossings;
+          if (c.addOsmMarkers) c.addOsmMarkers(osm); // วาดหมุดห้องน้ำ/กล้องของย่านเส้นทางนี้ ให้ตรงกับที่ AI ตอบ
           const full = scoreRoutes(routes, osm, c.problems);
           const best = full.reduce((bi, r, i, a) => ((r.comfort ?? -1) > (a[bi].comfort ?? -1) ? i : bi), 0);
           c.best = best; c.scored = full.map((r, i) => ({ ...r, recommended: i === best }));
