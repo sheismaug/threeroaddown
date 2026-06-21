@@ -197,6 +197,23 @@ function nearPolyline(p, line, radiusM) {
   for (let i = 0; i < line.length - 1; i++) if (pointToSegM(p, line[i], line[i + 1]) <= radiusM) return true;
   return false;
 }
+// หา "จุดบนเส้นทางที่ใกล้ p ที่สุดจริงๆ" (ฉายตั้งฉากลง segment ไม่ใช่แค่จุดหักมุม)
+// คืน { off: ระยะตั้งฉากถึงเส้น (ม.), along: ระยะสะสมจากต้นทางถึงจุดฉาย (ม.), seg: index ของ segment }
+function nearestOnRoute(pt, coords, rcum) {
+  let best = { off: Infinity, along: 0, seg: 0 };
+  const latR = (pt[1] * Math.PI) / 180, kx = 111320 * Math.cos(latR), ky = 110540;
+  const px = pt[0] * kx, py = pt[1] * ky;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const a = coords[i], b = coords[i + 1];
+    const ax = a[0] * kx, ay = a[1] * ky, bx = b[0] * kx, by = b[1] * ky;
+    const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+    let t = L2 ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+    const cx = ax + t * dx, cy = ay + t * dy;
+    const off = Math.hypot(px - cx, py - cy);
+    if (off < best.off) best = { off, along: rcum[i] + t * (rcum[i + 1] - rcum[i]), seg: i };
+  }
+  return best;
+}
 // อยู่ใต้ทางมีหลังคา/skywalk ไหม → ถือว่าร่ม 100%
 function underCovered(p, coveredWays, radiusM) {
   if (!coveredWays) return false;
@@ -326,13 +343,19 @@ function scoreRoutes(routes, osm, problems) {
     // รายชื่อห้องน้ำใกล้เส้นทาง (ชื่อ + ระยะจากต้นทาง) — ส่งให้ผู้ช่วย AI ตอบได้ว่าห้องน้ำอยู่ตรงไหนจริง ไม่ใช่เดาเอง
     const rcum = [0]; for (let i = 1; i < r.coordinates.length; i++) rcum[i] = rcum[i - 1] + haversine(r.coordinates[i - 1], r.coordinates[i]);
     const stepRoad = (ix) => { for (const st of (r.steps || [])) { if (ix >= st.wpStart && ix <= st.wpEnd && st.name) return st.name; } return ""; };
-    const toiletList = [];
+    let toiletList = [];
     for (const t of (osm.toilets || [])) {
-      let bi = 0, bd = Infinity;
-      for (let i = 0; i < r.coordinates.length; i++) { const dd = haversine(t.pt, r.coordinates[i]); if (dd < bd) { bd = dd; bi = i; } }
-      if (bd <= 120) toiletList.push({ name: (t.tags && (t.tags.name || t.tags["name:th"])) || "ห้องน้ำสาธารณะ", along: Math.round(rcum[bi]), off: Math.round(bd), road: stepRoad(bi), pt: t.pt });
+      const np = nearestOnRoute(t.pt, r.coordinates, rcum); // ระยะตั้งฉากถึงเส้นจริง + ตำแหน่งตามแนวเดิน
+      if (np.off <= 120) toiletList.push({ name: (t.tags && (t.tags.name || t.tags["name:th"])) || "ห้องน้ำสาธารณะ", along: Math.round(np.along), off: Math.round(np.off), road: stepRoad(np.seg) || stepRoad(np.seg + 1), pt: t.pt });
     }
-    toiletList.sort((a, b) => a.along - b.along);
+    // ยุบจุดที่ซ้อนใกล้กัน (≤30 ม. = น่าจะเป็นห้องน้ำเดียวกันถูก tag หลาย node) — เก็บจุดที่ใกล้เส้นทางที่สุด
+    toiletList.sort((a, b) => a.off - b.off);
+    const dedupT = [];
+    for (const t of toiletList) {
+      if (dedupT.some((u) => haversine(t.pt, u.pt) <= 30)) continue;
+      dedupT.push(t);
+    }
+    toiletList = dedupT.sort((a, b) => a.along - b.along);
     // จุดกล้อง CCTV ใกล้เส้นทาง (≤50 ม.) — ใช้โชว์หมุดในโหมดนำทาง 3D
     const cameraList = [];
     for (const cpt of (osm.cameras || [])) {
@@ -435,7 +458,8 @@ async function reverseGeocode(lonlat) {
     const j = await r.json();
     const a = j.address || {};
     const road = a.road || a.pedestrian || a.footway || a.path || "";
-    const place = a.building || a.amenity || a.shop || a.mall || a.office || a.tourism || a.neighbourhood || a.suburb || "";
+    // เลือกชื่อ "ตำแหน่งจริง" ที่เจาะจงก่อน (ตึก/POI/สวน) — เลี่ยง neighbourhood/suburb ที่กว้างและทำให้เข้าใจผิดว่าอยู่คนละที่
+    const place = a.building || a.amenity || a.leisure || a.shop || a.mall || a.office || a.tourism || a.neighbourhood || "";
     return { road, place };
   } catch (e) { return null; }
 }
@@ -719,8 +743,19 @@ export default function MapView({ apiRef }) {
       const near = Math.abs(along);
       if (near < hbest) { hbest = near; hazard = { label: CAT[p.cat]?.label || "จุดเสี่ยง", dist: Math.max(0, along) }; hid = p.pt.join(","); }
     }
+    // ห้องน้ำใกล้สุด "ข้างหน้า" ตามแนวเดิน (ใช้ along ที่วัดแบบตั้งฉากแม่นแล้ว) — ตรงกับสถานการณ์ "เดินอยู่แล้วอยากเข้าห้องน้ำ"
+    let toiletAhead = null, tbest = Infinity;
+    const userAlong = n.cum[idx];
+    for (const t of (n.toilets || [])) {
+      if (!t || t.along == null) continue;
+      const ahead = t.along - userAlong;          // ระยะตามแนวเดินถึงห้องน้ำ
+      if (ahead < -10 || ahead > 300) continue;   // ผ่านไปแล้ว / ไกลเกินไป
+      if ((t.off || 0) > 90) continue;            // เบี่ยงออกจากทางไกลเกิน
+      const walk = Math.max(0, ahead) + (t.off || 0); // ระยะเดินจริงโดยประมาณ (เลือกอันที่ถึงเร็วสุด)
+      if (walk < tbest) { tbest = walk; toiletAhead = { dist: Math.max(0, Math.round(ahead)), off: Math.round(t.off || 0), name: t.name || "ห้องน้ำ", where: [t.place, t.road].filter(Boolean).join(" · "), id: (t.pt || []).join(",") }; }
+    }
     const arrived = distDest < 20;
-    setNav({ active: true, instr, distTurn, distDest, hazard, arrived, cross: crossAhead });
+    setNav({ active: true, instr, distTurn, distDest, hazard, arrived, cross: crossAhead, toilet: toiletAhead });
     if (c.voiceOn) {
       const rnd = (m) => Math.max(10, Math.round(m / 10) * 10);
       const en = lang === "en";
@@ -736,6 +771,7 @@ export default function MapView({ apiRef }) {
       if ((mWp == null || distTurn > 90) && distDest > 40 && !c.straightSpoken) { c.straightSpoken = true; speakNow(en ? "Continue straight" : "เดินตรงไป", lang); }
       if (mWp != null && distTurn < 60) c.straightSpoken = false;
       if (hazard && hazard.dist < 50 && !c.spokenHaz.has(hid)) { c.spokenHaz.add(hid); speak(en ? "Caution, obstacle ahead" : `ระวัง ${hazard.label} ข้างหน้า`, lang); }
+      if (toiletAhead && toiletAhead.dist <= 45 && c.spokenToilet && !c.spokenToilet.has(toiletAhead.id)) { c.spokenToilet.add(toiletAhead.id); const tm = rnd(toiletAhead.dist); speak(en ? `Toilet ${tm} meters ahead` : `ห้องน้ำอีก ${tm} เมตรข้างหน้า`, lang); }
       if (arrived && !c.spokenArrived) { c.spokenArrived = true; speak(en ? "You have arrived" : "ถึงปลายทางแล้ว", lang); }
     }
   }
@@ -745,8 +781,8 @@ export default function MapView({ apiRef }) {
     const c = ctx.current, L = c.L; const r = c.scored?.[i]; if (!r || !L) return;
     const coords = r.coordinates; const cum = [0];
     for (let k = 1; k < coords.length; k++) cum[k] = cum[k - 1] + haversine(coords[k - 1], coords[k]);
-    c.nav = { coords, cum, steps: r.steps || [] };
-    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenCross = new Set(); c.spokenArrived = false; c.prevPos = null; c.straightSpoken = false;
+    c.nav = { coords, cum, steps: r.steps || [], toilets: r.toiletList || [] };
+    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenCross = new Set(); c.spokenToilet = new Set(); c.spokenArrived = false; c.prevPos = null; c.straightSpoken = false;
     if (!c.userMarker) c.userMarker = L.marker([coords[0][1], coords[0][0]], { icon: L.divIcon({ className: "", html: '<div style="width:18px;height:18px;border-radius:50%;background:#1d6fb8;border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.6)"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(mapRef.current);
     setNav({ active: true, instr: "กำลังหาตำแหน่ง…", distTurn: null, distDest: Math.round(cum[cum.length - 1]), hazard: null, arrived: false });
     if (!navigator.geolocation) { onErr(); return; }
@@ -757,8 +793,8 @@ export default function MapView({ apiRef }) {
     if (c.simTimer) { clearInterval(c.simTimer); c.simTimer = null; }
     const coords = r.coordinates; const cum = [0];
     for (let k = 1; k < coords.length; k++) cum[k] = cum[k - 1] + haversine(coords[k - 1], coords[k]);
-    c.nav = { coords, cum, steps: r.steps || [] };
-    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenCross = new Set(); c.spokenArrived = false; c.prevPos = null; c.straightSpoken = false;
+    c.nav = { coords, cum, steps: r.steps || [], toilets: r.toiletList || [] };
+    c.spokenTurns = new Set(); c.spokenHaz = new Set(); c.spokenCross = new Set(); c.spokenToilet = new Set(); c.spokenArrived = false; c.prevPos = null; c.straightSpoken = false;
     if (!c.userMarker) c.userMarker = L.marker([coords[0][1], coords[0][0]], { icon: L.divIcon({ className: "", html: '<div style="width:18px;height:18px;border-radius:50%;background:#1d6fb8;border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.6)"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(mapRef.current);
     setNav({ active: true, instr: "เริ่มเดิน (โหมดจำลอง)", distTurn: null, distDest: Math.round(cum[cum.length - 1]), hazard: null, arrived: false });
     let d = 0; const total = cum[cum.length - 1];
@@ -821,6 +857,7 @@ export default function MapView({ apiRef }) {
               )}
               {nav.cross ? <div style={{ marginTop: 6, background: "#e9a23b", borderRadius: 6, padding: "5px 8px", fontWeight: 700, fontSize: 14 }}>🚸 เตรียมข้ามถนน อีก ~{nav.cross.dist} ม.</div> : null}
               {nav.hazard ? <div style={{ marginTop: 6, background: "#c1121f", borderRadius: 6, padding: "5px 8px", fontWeight: 700, fontSize: 14 }}>⚠️ ระวัง {nav.hazard.label} อีก ~{nav.hazard.dist} ม.</div> : null}
+              {nav.toilet ? <div style={{ marginTop: 6, background: "#0f8a8a", borderRadius: 6, padding: "5px 8px", fontWeight: 700, fontSize: 14 }}>🚻 ห้องน้ำข้างหน้า ~{nav.toilet.dist} ม.{nav.toilet.off ? ` (เบี่ยงจากทาง ~${nav.toilet.off} ม.)` : ""}{nav.toilet.where ? ` · ${nav.toilet.where}` : ""}</div> : null}
             </div>
             <div style={{ display: "flex", gap: 6 }}>
               <button onClick={toggleVoiceLang} style={{ background: "rgba(255,255,255,.25)", border: "none", color: "#fff", borderRadius: 8, padding: "8px 10px", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>{voiceLang === "en" ? "EN" : "ไทย"}</button>
