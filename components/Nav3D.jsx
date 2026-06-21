@@ -106,6 +106,7 @@ export default function Nav3D({ route, problems, toilets, cameras, destName, onC
   const ctx = useRef({ timer: null, prev: null, spoken: new Set(), voiceOn: true, lang: "th", straightD: -999 });
   const [banner, setBanner] = useState({ instr: "เริ่มนำทาง", dist: null, dest: null });
   const [hazAlert, setHazAlert] = useState(null);
+  const [toiletAhead, setToiletAhead] = useState(null);
   const [arrived, setArrived] = useState(false);
   const [voice, setVoice] = useState(true);
   const [lang, setLang] = useState("th");
@@ -129,8 +130,18 @@ export default function Nav3D({ route, problems, toilets, cameras, destName, onC
     const toiletNear = [];
     for (const t of (toilets && toilets.length ? toilets : (route.toiletList || []))) {
       const pt = (t && t.pt) || t; if (!pt) continue;
-      let rb = Infinity; for (let i = 0; i < coords.length; i++) { const d = haversine(pt, coords[i]); if (d < rb) rb = d; }
-      if (rb <= 120) toiletNear.push({ pt, name: (t.tags && (t.tags.name || t.tags["name:th"])) || t.name || "ห้องน้ำสาธารณะ", road: t.road || "", place: t.place || "" });
+      // ฉายตั้งฉากลงเส้นทาง หา off (ระยะเบี่ยงจริง) + along (ตำแหน่งตามแนวเดิน) — แม่นเท่า 2D
+      const kx = 111320 * Math.cos((pt[1] * Math.PI) / 180), ky = 110540, px = pt[0] * kx, py = pt[1] * ky;
+      let best = { off: Infinity, along: 0 };
+      for (let i = 0; i < coords.length - 1; i++) {
+        const a = coords[i], b = coords[i + 1];
+        const ax = a[0] * kx, ay = a[1] * ky, bx = b[0] * kx, by = b[1] * ky;
+        const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+        let tt = L2 ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0; tt = Math.max(0, Math.min(1, tt));
+        const cx = ax + tt * dx, cy = ay + tt * dy, off = Math.hypot(px - cx, py - cy);
+        if (off < best.off) best = { off, along: cum[i] + tt * (cum[i + 1] - cum[i]) };
+      }
+      if (best.off <= 120) toiletNear.push({ pt, name: (t.tags && (t.tags.name || t.tags["name:th"])) || t.name || "ห้องน้ำสาธารณะ", road: t.road || "", place: t.place || "", along: best.along, off: Math.round(best.off) });
     }
     const camNear = [];
     for (const cc of (cameras && cameras.length ? cameras : (route.cameraList || []))) {
@@ -227,6 +238,16 @@ export default function Nav3D({ route, problems, toilets, cameras, destName, onC
           for (const p of hazNear) { const a = Math.round(p.ralong - d); if (a >= 3 && a <= 60 && a < ab) { ab = a; alert = { ...hz(p.cat), dist: a, id: p.pt.join(",") }; } }
           setHazAlert(alert);
 
+          // ห้องน้ำใกล้สุด "ข้างหน้า" ตามแนวเดิน (along แม่นแบบตั้งฉาก) — ให้เหมือนโหมด 2D
+          let tAhead = null, tb = Infinity;
+          for (const tt2 of toiletNear) {
+            const ahead = tt2.along - d;
+            if (ahead < -10 || ahead > 300 || (tt2.off || 0) > 90) continue;
+            const walk = Math.max(0, ahead) + (tt2.off || 0);
+            if (walk < tb) { tb = walk; tAhead = { dist: Math.max(0, Math.round(ahead)), off: Math.round(tt2.off || 0), where: [tt2.place, tt2.road].filter(Boolean).join(" · "), id: (tt2.pt || []).join(",") }; }
+          }
+          setToiletAhead(tAhead);
+
           if (ctx.current.voiceOn) {
             if (alert && alert.dist <= 35 && !ctx.current.spoken.has("h" + alert.id)) {
               ctx.current.spoken.add("h" + alert.id);
@@ -239,11 +260,16 @@ export default function Nav3D({ route, problems, toilets, cameras, destName, onC
               ctx.current.straightD = d;
               say(L === "en" ? "Continue straight" : "เดินตรงไป", L, false);
             }
+            if (tAhead && tAhead.dist <= 45 && !ctx.current.spoken.has("t" + tAhead.id)) {
+              ctx.current.spoken.add("t" + tAhead.id);
+              const tm = Math.max(10, Math.round(tAhead.dist / 10) * 10);
+              say(L === "en" ? `Toilet ${tm} meters ahead` : `ห้องน้ำอีก ${tm} เมตรข้างหน้า`, L, false);
+            }
           }
 
           if (d >= total) {
             clearInterval(ctx.current.timer); ctx.current.timer = null;
-            setArrived(true); setBanner({ instr: L === "en" ? "You have arrived" : "ถึงปลายทางแล้ว", dist: null, dest: 0 });
+            setArrived(true); setToiletAhead(null); setBanner({ instr: L === "en" ? "You have arrived" : "ถึงปลายทางแล้ว", dist: null, dest: 0 });
             say(L === "en" ? `You have arrived at ${destName || "your destination"}` : `ถึง${destName || "ปลายทาง"}แล้ว`, L, true);
           }
         }, 700);
@@ -276,6 +302,13 @@ export default function Nav3D({ route, problems, toilets, cameras, destName, onC
             <div style={{ fontSize: 18, fontWeight: 800, color: hazAlert.color }}>ระวัง! {hazAlert.label}</div>
             <div style={{ fontSize: 14, color: "#555" }}>อยู่ข้างหน้า อีก ~{hazAlert.dist} เมตร</div>
           </div>
+        </div>
+      ) : null}
+
+      {toiletAhead && !arrived ? (
+        <div style={{ position: "absolute", top: hazAlert ? 162 : 92, left: "50%", transform: "translateX(-50%)", background: "#0f8a8a", color: "#fff", borderRadius: 14, padding: "8px 14px", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 4px 16px rgba(0,0,0,.3)", maxWidth: "90vw" }}>
+          <span style={{ fontSize: 24 }}>🚻</span>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>ห้องน้ำข้างหน้า ~{toiletAhead.dist} ม.{toiletAhead.off ? ` (เบี่ยง ~${toiletAhead.off} ม.)` : ""}{toiletAhead.where ? ` · ${toiletAhead.where}` : ""}</div>
         </div>
       ) : null}
 
