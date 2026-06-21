@@ -235,7 +235,7 @@ const LANDMARKS = [
   { aliases: ["สยามพารากอน", "พารากอน", "paragon"], coord: [100.5347, 13.7462], name: "สยามพารากอน" },
   { aliases: ["สยามสแควร์", "สยาม", "siam"], coord: [100.5331, 13.7456], name: "สยาม (BTS)" },
   { aliases: ["มาบุญครอง", "mbk", "เอ็มบีเค"], coord: [100.5300, 13.7445], name: "MBK / มาบุญครอง" },
-  { aliases: ["โรงพยาบาลจุฬา", "รพ.จุฬา", "รพจุฬา", "chula hospital"], coord: [100.5366, 13.7295], name: "รพ.จุฬาฯ" },
+  { aliases: ["โรงพยาบาลจุฬา", "รพ.จุฬา", "รพจุฬา", "chula hospital"], coord: [100.5356, 13.7314], name: "รพ.จุฬาฯ", query: "โรงพยาบาลจุฬาลงกรณ์ ปทุมวัน กรุงเทพ" },
   { aliases: ["จุฬาลงกรณ์มหาวิทยาลัย", "จุฬาลงกรณ์", "จุฬา", "chulalongkorn", "chula"], coord: [100.5318, 13.7378], name: "จุฬาลงกรณ์มหาวิทยาลัย" },
   { aliases: ["สามย่านมิตรทาวน์", "สามย่าน", "samyan"], coord: [100.5283, 13.7320], name: "สามย่าน" },
   { aliases: ["จามจุรีสแควร์", "จามจุรี", "chamchuri"], coord: [100.5295, 13.7335], name: "จามจุรีสแควร์" },
@@ -246,14 +246,30 @@ const LANDMARKS = [
   { aliases: ["หัวลำโพง", "hua lamphong", "hualamphong"], coord: [100.5170, 13.7373], name: "หัวลำโพง" },
   { aliases: ["ปทุมวัน", "pathumwan", "pathum wan"], coord: [100.5320, 13.7440], name: "ปทุมวัน" },
 ];
-function resolvePlace(q) {
+// แก้พิกัดแลนด์มาร์กให้ "ทนทาน": ถ้า lm มี query เฉพาะ -> ถาม OSM (Nominatim) เอาพิกัดจริง
+// แต่ยอมรับเฉพาะเมื่ออยู่ใกล้พิกัด curated (<1.5 กม.) กัน Nominatim คืนที่ผิด/กำกวม
+// ถ้าออฟไลน์/หาไม่เจอ -> ใช้พิกัด curated เป็น fallback · ผลลัพธ์ cache ใน localStorage
+async function resolveLandmark(lm) {
+  if (!lm.query) return { coord: lm.coord, name: lm.name, landmark: true };
+  const key = "lmpos:" + lm.name;
+  try { const cc = localStorage.getItem(key); if (cc) { const o = JSON.parse(cc); if (o && o.coord) return { coord: o.coord, name: lm.name, landmark: true }; } } catch (e) {}
+  try {
+    const g = await geocodeNominatim(lm.query);
+    if (g && g.coord && haversine(g.coord, lm.coord) < 1500) {
+      try { localStorage.setItem(key, JSON.stringify({ coord: g.coord })); } catch (e) {}
+      return { coord: g.coord, name: lm.name, landmark: true };
+    }
+  } catch (e) {}
+  return { coord: lm.coord, name: lm.name, landmark: true };
+}
+async function resolvePlace(q) {
   if (!q) return null;
   const s = q.trim().toLowerCase();
   if (s.length < 2) return null;
   for (const lm of LANDMARKS) {
     for (const a of lm.aliases) {
       const al = a.toLowerCase();
-      if (s.includes(al) || (al.length >= 3 && al.includes(s))) return { coord: lm.coord, name: lm.name, landmark: true };
+      if (s.includes(al) || (al.length >= 3 && al.includes(s))) return await resolveLandmark(lm);
     }
   }
   return null;
@@ -297,7 +313,7 @@ async function suggestPlaces(q) {
   const out = [];
   for (const lm of LANDMARKS) {
     if (lm.aliases.some((a) => { const al = a.toLowerCase(); return al.includes(s) || s.includes(al); })) {
-      if (!out.some((o) => o.name === lm.name)) out.push({ name: lm.name, coord: lm.coord, src: "landmark" });
+      if (!out.some((o) => o.name === lm.name)) out.push({ name: lm.name, coord: lm.coord, src: "landmark", lm });
     }
   }
   try {
@@ -323,7 +339,7 @@ function PlaceInput({ value, onChange, onPick, onEnter, placeholder }) {
     if (tRef.current) clearTimeout(tRef.current);
     if (!v || ss.length < 2) { setSugs([]); setOpen(false); return; }
     // โชว์สถานที่ยอดนิยมในเครื่องทันที (ไม่รอเน็ต) แล้วค่อยเติมผลจาก OSM
-    const local = LANDMARKS.filter((lm) => lm.aliases.some((a) => { const al = a.toLowerCase(); return al.includes(ss) || ss.includes(al); })).map((lm) => ({ name: lm.name, coord: lm.coord, src: "landmark" }));
+    const local = LANDMARKS.filter((lm) => lm.aliases.some((a) => { const al = a.toLowerCase(); return al.includes(ss) || ss.includes(al); })).map((lm) => ({ name: lm.name, coord: lm.coord, src: "landmark", lm }));
     if (local.length) { setSugs(local); setOpen(true); }
     tRef.current = setTimeout(async () => { const r = await suggestPlaces(v); if (r.length) { setSugs(r); setOpen(true); } }, 250);
   }
@@ -335,7 +351,7 @@ function PlaceInput({ value, onChange, onPick, onEnter, placeholder }) {
       {open ? (
         <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#fff", border: "1px solid #ddd", borderRadius: 9, boxShadow: "0 4px 14px rgba(0,0,0,.18)", zIndex: 1400, maxHeight: 240, overflowY: "auto", marginTop: 2 }}>
           {sugs.map((sg, i) => (
-            <div key={i} onMouseDown={() => { onPick(sg.name, sg.coord); setOpen(false); }}
+            <div key={i} onMouseDown={() => { onPick(sg); setOpen(false); }}
               style={{ padding: "9px 11px", fontSize: 14, cursor: "pointer", borderBottom: "1px solid #f0f0f0", display: "flex", justifyContent: "space-between", gap: 8 }}>
               <span>{sg.name}</span><span style={{ fontSize: 11, color: "#aaa" }}>{sg.src === "landmark" ? "⭐ ที่นิยม" : "OSM"}</span>
             </div>
@@ -431,7 +447,7 @@ export default function MapView({ apiRef }) {
         if (c.routeKey === key && c.scored) { c.select(c.best); return c.scored; }
         c.routeLayer.clearLayers(); setRouteData({ loading: true });
         let sName = "สยาม (BTS)", eName = "รพ.จุฬาฯ", sCoord = null, eCoord = null, note = null;
-        const resolve = async (x) => { if (!x) return null; const pc = c.placeCache && c.placeCache[x]; if (pc) return pc; return resolvePlace(x) || (await geocodeNominatim(x)); };
+        const resolve = async (x) => { if (!x) return null; const pc = c.placeCache && c.placeCache[x]; if (pc) return pc; return (await resolvePlace(x)) || (await geocodeNominatim(x)); };
         const [gFrom, gTo] = await Promise.all([resolve(from), resolve(to)]);
         if (from) { if (gFrom) { sCoord = gFrom.coord; sName = gFrom.name; } else note = `หา "${from}" ไม่เจอ (ใช้สยามแทน) — ลองพิมพ์ชื่อให้ชัดขึ้น เช่น สนามกีฬาแห่งชาติ`; }
         if (to) { if (gTo) { eCoord = gTo.coord; eName = gTo.name; } else note = (note ? note + " · " : "") + `หา "${to}" ไม่เจอ (ใช้ รพ.จุฬาฯ แทน)`; }
@@ -644,9 +660,9 @@ export default function MapView({ apiRef }) {
       {!nav?.active ? (
       <div className="wb-card wb-search">
         <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>🔍 ค้นหาเส้นทางเดิน</div>
-        <PlaceInput value={sFrom} onChange={setSFrom} onEnter={doSearch} onPick={(name, coord) => { setSFrom(name); ctx.current.placeCache[name] = { coord, name }; }} placeholder="จาก (เช่น สนามกีฬาแห่งชาติ)" />
+        <PlaceInput value={sFrom} onChange={setSFrom} onEnter={doSearch} onPick={async (sg) => { let coord = sg.coord; if (sg.src === "landmark" && sg.lm) { try { const r = await resolveLandmark(sg.lm); if (r?.coord) coord = r.coord; } catch (e) {} } setSFrom(sg.name); ctx.current.placeCache[sg.name] = { coord, name: sg.name }; }} placeholder="จาก (เช่น สนามกีฬาแห่งชาติ)" />
         <div style={{ height: 6 }} />
-        <PlaceInput value={sTo} onChange={setSTo} onEnter={doSearch} onPick={(name, coord) => { setSTo(name); ctx.current.placeCache[name] = { coord, name }; }} placeholder="ไป (เช่น รพ.จุฬาฯ)" />
+        <PlaceInput value={sTo} onChange={setSTo} onEnter={doSearch} onPick={async (sg) => { let coord = sg.coord; if (sg.src === "landmark" && sg.lm) { try { const r = await resolveLandmark(sg.lm); if (r?.coord) coord = r.coord; } catch (e) {} } setSTo(sg.name); ctx.current.placeCache[sg.name] = { coord, name: sg.name }; }} placeholder="ไป (เช่น รพ.จุฬาฯ)" />
         <button onClick={doSearch} style={{ width: "100%", marginTop: 8, padding: "9px", border: "none", borderRadius: 9, background: "#2a9d54", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>ค้นหาเส้นทาง</button>
       </div>
       ) : null}

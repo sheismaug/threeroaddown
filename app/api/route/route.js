@@ -3,7 +3,7 @@ function _hav(a, b) { const R = 6371000; const dLat = ((b[1]-a[1])*Math.PI)/180,
 function _sameGeom(a, b) { const n=Math.min(a.length,b.length); if(!n) return false; let far=0,chk=0; for(let f=0.2;f<0.95;f+=0.2){ const ia=Math.floor(a.length*f), ib=Math.floor(b.length*f); chk++; if(_hav(a[ia],b[ib])>45) far++; } return far===0; }
 const ORS_DIR = "https://api.openrouteservice.org/v2/directions/foot-walking/geojson";
 const DEF_START = [100.5331, 13.7456]; // สยาม
-const DEF_END = [100.5366, 13.7295];   // รพ.จุฬาฯ
+const DEF_END = [100.5356, 13.7314];   // รพ.จุฬาฯ (โรงพยาบาลจุฬาลงกรณ์ — แก้พิกัดให้ตรงตัวอาคารจริง)
 
 function parseCoord(lon, lat, fallback) {
   const a = parseFloat(lon), b = parseFloat(lat);
