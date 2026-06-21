@@ -241,11 +241,12 @@ function scoreRoutes(routes, osm, problems) {
     const comfort = den ? Math.round(num / den) : null;
     // รายชื่อห้องน้ำใกล้เส้นทาง (ชื่อ + ระยะจากต้นทาง) — ส่งให้ผู้ช่วย AI ตอบได้ว่าห้องน้ำอยู่ตรงไหนจริง ไม่ใช่เดาเอง
     const rcum = [0]; for (let i = 1; i < r.coordinates.length; i++) rcum[i] = rcum[i - 1] + haversine(r.coordinates[i - 1], r.coordinates[i]);
+    const stepRoad = (ix) => { for (const st of (r.steps || [])) { if (ix >= st.wpStart && ix <= st.wpEnd && st.name) return st.name; } return ""; };
     const toiletList = [];
     for (const t of (osm.toilets || [])) {
       let bi = 0, bd = Infinity;
       for (let i = 0; i < r.coordinates.length; i++) { const dd = haversine(t.pt, r.coordinates[i]); if (dd < bd) { bd = dd; bi = i; } }
-      if (bd <= 150) toiletList.push({ name: (t.tags && (t.tags.name || t.tags["name:th"])) || "ห้องน้ำสาธารณะ", along: Math.round(rcum[bi]), off: Math.round(bd) });
+      if (bd <= 150) toiletList.push({ name: (t.tags && (t.tags.name || t.tags["name:th"])) || "ห้องน้ำสาธารณะ", along: Math.round(rcum[bi]), off: Math.round(bd), road: stepRoad(bi), pt: t.pt });
     }
     toiletList.sort((a, b) => a.along - b.along);
     return { ...r, hazards, cameras: cams, floodN, darkN, floodRiskN, safe, shade, green, toilet, toiletsNear: toiletsN, comfort, timeMode: WT.mode, toiletList: toiletList.slice(0, 8) };
@@ -327,6 +328,33 @@ function queuedGeocode(query) {
   const run = async () => {
     await new Promise((r) => setTimeout(r, 1100)); // เคารพ rate limit Nominatim
     const g = await geocodeNominatim(query);
+    try { if (g) localStorage.setItem(key, JSON.stringify(g)); } catch (e) {}
+    return g;
+  };
+  const pr = _gcChain.then(run, run);
+  _gcChain = pr.catch(() => {});
+  return pr;
+}
+// reverse geocode: พิกัด -> ชื่อถนน/ตึก/ย่าน (ใช้บอกว่าห้องน้ำ "อยู่ตึกไหน ถนนอะไร")
+async function reverseGeocode(lonlat) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&accept-language=th&zoom=18&lon=${lonlat[0]}&lat=${lonlat[1]}`;
+    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const a = j.address || {};
+    const road = a.road || a.pedestrian || a.footway || a.path || "";
+    const place = a.building || a.amenity || a.shop || a.mall || a.office || a.tourism || a.neighbourhood || a.suburb || "";
+    return { road, place };
+  } catch (e) { return null; }
+}
+// ต่อคิวเดียวกับ geocode (เคารพ rate limit Nominatim 1 req/วิ) + cache ลง localStorage
+function queuedReverse(lonlat) {
+  const key = "rev:" + lonlat.map((x) => x.toFixed(5)).join(",");
+  try { const c = localStorage.getItem(key); if (c) return Promise.resolve(JSON.parse(c)); } catch (e) {}
+  const run = async () => {
+    await new Promise((r) => setTimeout(r, 1100));
+    const g = await reverseGeocode(lonlat);
     try { if (g) localStorage.setItem(key, JSON.stringify(g)); } catch (e) {}
     return g;
   };
@@ -515,6 +543,21 @@ export default function MapView({ apiRef }) {
           c.best = best; c.scored = full.map((r, i) => ({ ...r, recommended: i === best }));
           c.select(best);
           setRouteData({ routes: full, best, osmOk: osm.ok, startName: sName, endName: eName, note });
+          // เติมชื่อตึก/ย่านของห้องน้ำด้วย reverse geocode (เบื้องหลัง + cache) เพื่อให้ AI บอกได้ว่า "อยู่ตึกไหน"
+          (async () => {
+            const seen = {};
+            for (const r of full) {
+              for (const t of (r.toiletList || [])) {
+                if (!t.pt) continue;
+                const kk = t.pt.map((x) => x.toFixed(5)).join(",");
+                if (!(kk in seen)) seen[kk] = await queuedReverse(t.pt);
+                if (c.routeKey !== key) return;
+                const g = seen[kk];
+                if (g) { if (g.place) t.place = g.place; if (!t.road && g.road) t.road = g.road; }
+              }
+            }
+            c.scored = full.map((r, i) => ({ ...r, recommended: i === best }));
+          })();
         })();
         return c.scored;
       },
@@ -645,7 +688,7 @@ export default function MapView({ apiRef }) {
         .wb-card{position:absolute;background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:system-ui;z-index:1000;}
         .wb-info{top:12px;left:12px;max-width:280px;padding:10px 14px;}
         .wb-route{top:12px;right:12px;width:300px;padding:10px 14px;z-index:1300;max-height:calc(100vh - 24px);overflow:auto;}
-        body.wb-chatopen .wb-route{max-height:44vh;}
+        body.wb-chatopen .wb-route{max-height:calc(100vh - 500px);}
         .wb-legend{bottom:16px;left:12px;padding:8px 12px;font-size:12px;column-count:2;column-gap:14px;}
         .wb-nav{top:0;left:0;right:0;border-radius:0;background:#1d6fb8;color:#fff;padding:12px 16px;z-index:1600;}
         .wb-startbtn{display:block;width:100%;margin-top:8px;padding:10px;border:none;border-radius:8px;background:#1d6fb8;color:#fff;font-weight:800;font-size:15px;cursor:pointer;}

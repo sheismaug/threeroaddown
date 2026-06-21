@@ -80,7 +80,7 @@ export default function ChatBox({ mapApi }) {
   return (
     <div
       style={{
-        position: "fixed", right: 16, bottom: 16, zIndex: 1200, width: 340, maxWidth: "92vw",
+        position: "fixed", right: 16, bottom: 16, zIndex: 1350, width: 340, maxWidth: "92vw",
         height: 460, maxHeight: "52vh", background: "white", borderRadius: 14,
         boxShadow: "0 4px 20px rgba(0,0,0,.3)", display: "flex", flexDirection: "column", overflow: "hidden",
       }}
