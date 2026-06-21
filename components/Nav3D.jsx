@@ -136,7 +136,7 @@ export default function Nav3D({ route, problems, toilets, cameras, destName, onC
     for (const cc of (cameras && cameras.length ? cameras : (route.cameraList || []))) {
       const pt = (cc && cc.pt) || cc; if (!pt) continue;
       let rb = Infinity; for (let i = 0; i < coords.length; i++) { const d = haversine(pt, coords[i]); if (d < rb) rb = d; }
-      if (rb <= 60) camNear.push(pt);
+      if (rb <= 120) camNear.push(pt);
     }
 
     (async () => {
