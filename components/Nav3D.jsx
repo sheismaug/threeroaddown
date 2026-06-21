@@ -100,7 +100,7 @@ function loadMapLibre() {
   });
 }
 
-export default function Nav3D({ route, problems, destName, onClose }) {
+export default function Nav3D({ route, problems, toilets, cameras, destName, onClose }) {
   const elRef = useRef(null);
   const mapRef = useRef(null);
   const ctx = useRef({ timer: null, prev: null, spoken: new Set(), voiceOn: true, lang: "th", straightD: -999 });
@@ -124,6 +124,19 @@ export default function Nav3D({ route, problems, destName, onClose }) {
       let ri = 0, rb = Infinity;
       for (let i = 0; i < coords.length; i++) { const d = haversine(p.pt, coords[i]); if (d < rb) { rb = d; ri = i; } }
       if (rb < 30) hazNear.push({ ...p, ri, ralong: cum[ri] });
+    }
+    // ห้องน้ำ/กล้องใกล้เส้นทาง — ใช้ชุดข้อมูลเดียวกับแผนที่หลัก (fallback เป็นรายการในเส้นทาง)
+    const toiletNear = [];
+    for (const t of (toilets && toilets.length ? toilets : (route.toiletList || []))) {
+      const pt = (t && t.pt) || t; if (!pt) continue;
+      let rb = Infinity; for (let i = 0; i < coords.length; i++) { const d = haversine(pt, coords[i]); if (d < rb) rb = d; }
+      if (rb <= 120) toiletNear.push({ pt, name: (t.tags && (t.tags.name || t.tags["name:th"])) || t.name || "ห้องน้ำสาธารณะ", road: t.road || "", place: t.place || "" });
+    }
+    const camNear = [];
+    for (const cc of (cameras && cameras.length ? cameras : (route.cameraList || []))) {
+      const pt = (cc && cc.pt) || cc; if (!pt) continue;
+      let rb = Infinity; for (let i = 0; i < coords.length; i++) { const d = haversine(pt, coords[i]); if (d < rb) rb = d; }
+      if (rb <= 60) camNear.push(pt);
     }
 
     (async () => {
@@ -155,15 +168,14 @@ export default function Nav3D({ route, problems, destName, onClose }) {
         }
 
         // หมุดห้องน้ำ (W) และกล้อง CCTV (C) ใกล้เส้นทาง — ให้เหมือนแผนที่หลัก
-        for (const t of (route.toiletList || [])) {
-          if (!t.pt) continue;
+        for (const t of toiletNear) {
           const te = document.createElement("div");
           const tlabel = [t.place, t.road].filter(Boolean).join(" · ");
           te.innerHTML = '<div style="background:#2a9d8f;color:#fff;border-radius:50%;width:22px;height:22px;line-height:22px;text-align:center;font-weight:800;font-size:12px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45)">W</div>';
           const tm = new maplibregl.Marker({ element: te, anchor: "center" }).setLngLat(t.pt).addTo(map);
           try { tm.setPopup(new maplibregl.Popup({ offset: 14 }).setHTML(`<b>ห้องน้ำ</b>${tlabel ? "<br/>" + tlabel : ""}`)); } catch (e) {}
         }
-        for (const cpt of (route.cameraList || [])) {
+        for (const cpt of camNear) {
           const ce = document.createElement("div");
           ce.innerHTML = '<div style="background:#1b998b;color:#fff;border-radius:4px;width:20px;height:20px;line-height:20px;text-align:center;font-weight:800;font-size:11px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.45)">C</div>';
           const cm = new maplibregl.Marker({ element: ce, anchor: "center" }).setLngLat(cpt).addTo(map);

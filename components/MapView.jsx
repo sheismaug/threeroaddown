@@ -465,10 +465,11 @@ export default function MapView({ apiRef }) {
       // วาดหมุดห้องน้ำ/กล้องแบบกันซ้ำ — ใช้ทั้งตอนโหลดย่าน demo และตอนค้นเส้นทางที่ออกนอกย่าน
       // เพื่อให้ "หมุด W บนแผนที่" ตรงกับ "ห้องน้ำที่ AI ตอบ" (ก่อนหน้านี้คนละชุดข้อมูลเลยไม่สัมพันธ์กัน)
       ctx.current.toiletSeen = new Set(); ctx.current.camSeen = new Set();
+      ctx.current.osmToilets = []; ctx.current.osmCameras = []; // เก็บไว้ส่งให้โหมด 3D ด้วย
       ctx.current.addOsmMarkers = (osm) => {
         if (!osm) return;
-        for (const t of (osm.toilets || [])) { const [lon, lat] = t.pt; const k = lon.toFixed(5) + "," + lat.toFixed(5); if (ctx.current.toiletSeen.has(k)) continue; ctx.current.toiletSeen.add(k); const name = t.tags?.name || t.tags?.["name:th"] || "ห้องน้ำสาธารณะ"; L.marker([lat, lon], { icon: toiletIcon }).bindPopup(`<b>ห้องน้ำ: ${name}</b>`).addTo(toiletsLayer); }
-        for (const cpt of (osm.cameras || [])) { const [lon, lat] = cpt; const k = lon.toFixed(5) + "," + lat.toFixed(5); if (ctx.current.camSeen.has(k)) continue; ctx.current.camSeen.add(k); L.marker([lat, lon], { icon: camIcon }).bindPopup("กล้อง CCTV (OSM)").addTo(cctvLayer); }
+        for (const t of (osm.toilets || [])) { const [lon, lat] = t.pt; const k = lon.toFixed(5) + "," + lat.toFixed(5); if (ctx.current.toiletSeen.has(k)) continue; ctx.current.toiletSeen.add(k); ctx.current.osmToilets.push(t); const name = t.tags?.name || t.tags?.["name:th"] || "ห้องน้ำสาธารณะ"; L.marker([lat, lon], { icon: toiletIcon }).bindPopup(`<b>ห้องน้ำ: ${name}</b>`).addTo(toiletsLayer); }
+        for (const cpt of (osm.cameras || [])) { const [lon, lat] = cpt; const k = lon.toFixed(5) + "," + lat.toFixed(5); if (ctx.current.camSeen.has(k)) continue; ctx.current.camSeen.add(k); ctx.current.osmCameras.push(cpt); L.marker([lat, lon], { icon: camIcon }).bindPopup("กล้อง CCTV (OSM)").addTo(cctvLayer); }
         setToilets(ctx.current.toiletSeen.size); setCams(ctx.current.camSeen.size);
       };
 
@@ -770,7 +771,7 @@ export default function MapView({ apiRef }) {
             <div>
               {navTarget != null ? (
                 <div style={{ marginBottom: 8 }}>
-                  <button className="wb-startbtn" style={{ background: "#6a4c93" }} onClick={() => { unlockSpeech(); const r = ctx.current.scored?.[navTarget]; if (r) setNav3D({ route: r, problems: ctx.current.problems, destName: routeData?.endName || "ปลายทาง" }); }}>🧭 นำทาง 3D (จำลอง)</button>
+                  <button className="wb-startbtn" style={{ background: "#6a4c93" }} onClick={() => { unlockSpeech(); const r = ctx.current.scored?.[navTarget]; if (r) setNav3D({ route: r, problems: ctx.current.problems, toilets: ctx.current.osmToilets, cameras: ctx.current.osmCameras, destName: routeData?.endName || "ปลายทาง" }); }}>🧭 นำทาง 3D (จำลอง)</button>
                   <button className="wb-startbtn" style={{ marginTop: 6 }} onClick={() => { unlockSpeech(); startSim(navTarget); }}>🧪 ทดลองเดิน 2D</button>
                   <button className="wb-startbtn" style={{ background: "#1d6fb8", marginTop: 6 }} onClick={() => { unlockSpeech(); startNav(navTarget); }}>▶ นำทางจริง (GPS)</button>
                 </div>
@@ -803,7 +804,7 @@ export default function MapView({ apiRef }) {
         <Legend color="#0077b6" label="เสี่ยงน้ำท่วม (กทม.)" />
         <Legend color="#2a9d54" label="เส้นแนะนำ" />
       </div>
-      {nav3d ? <Nav3D route={nav3d.route} problems={nav3d.problems} destName={nav3d.destName} onClose={() => setNav3D(null)} /> : null}
+      {nav3d ? <Nav3D route={nav3d.route} problems={nav3d.problems} toilets={nav3d.toilets} cameras={nav3d.cameras} destName={nav3d.destName} onClose={() => setNav3D(null)} /> : null}
     </div>
   );
 }
