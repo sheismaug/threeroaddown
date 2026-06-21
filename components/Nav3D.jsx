@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { speak, loadVoices } from "./speech";
+
+// ใช้ระบบเสียงร่วมกับ MapView (โมดูล ./speech) — say เป็น adapter ของ speak ให้เข้ากับ call site เดิม
+const say = (t, l, urgent) => speak(t, l, urgent ? { urgent: true } : undefined);
 
 function haversine(a, b) {
   const R = 6371000;
@@ -55,37 +59,6 @@ const HAZ = {
 };
 const hz = (c) => HAZ[c] || { emoji: "⚠️", label: "จุดเสี่ยง", en: "hazard", color: "#e63946" };
 
-let _v = [];
-let _vRefs = [];   // เก็บ reference utterance กัน GC ตัดเสียงกลางประโยค
-let _vLast = 0;    // เวลาเริ่มพูดล่าสุด ใช้ตรวจสถานะค้าง
-let _vWatch = null;
-function _vWatchdog() {
-  if (_vWatch) return;
-  _vWatch = setInterval(() => {
-    try {
-      const ss = window.speechSynthesis; if (!ss) return;
-      if (ss.paused) ss.resume();                                  // กันบั๊ก Chrome หยุดพูดเองหลัง ~15 วิ
-      if (ss.speaking && Date.now() - _vLast > 12000) ss.cancel(); // สถานะค้าง -> รีเซ็ต (กัน 3D เงียบสนิท)
-      if (!ss.speaking && !ss.pending) _vRefs = [];
-    } catch (e) {}
-  }, 3000);
-}
-function say(t, l, urgent) {
-  try {
-    const ss = window.speechSynthesis; if (!ss || !t) return;
-    if (ss.paused) ss.resume();
-    if (urgent) ss.cancel();
-    else if (ss.speaking || ss.pending) { if (Date.now() - _vLast > 12000) ss.cancel(); else return; }
-    if (!_v.length) _v = ss.getVoices() || [];
-    const u = new SpeechSynthesisUtterance(t);
-    const vo = _v.find((x) => (l === "en" ? /^en/i : /^th/i).test(x.lang)); if (vo) u.voice = vo;
-    u.lang = l === "en" ? "en-US" : "th-TH";
-    u.onend = u.onerror = () => { _vRefs = _vRefs.filter((x) => x !== u); };
-    _vRefs.push(u); _vLast = Date.now(); _vWatchdog();
-    ss.speak(u);
-  } catch (e) {}
-}
-
 function loadMapLibre() {
   return new Promise((resolve, reject) => {
     if (window.maplibregl) return resolve(window.maplibregl);
@@ -113,7 +86,7 @@ export default function Nav3D({ route, problems, toilets, cameras, destName, onC
 
   useEffect(() => {
     let cancelled = false;
-    try { if (window.speechSynthesis) { _v = window.speechSynthesis.getVoices() || []; window.speechSynthesis.onvoiceschanged = () => { _v = window.speechSynthesis.getVoices() || []; }; } } catch (e) {}
+    loadVoices(); // เตรียม voice list (โมดูล ./speech ดูแล onvoiceschanged ให้แล้ว)
     const coords = route.coordinates;
     const cum = [0]; for (let i = 1; i < coords.length; i++) cum[i] = cum[i - 1] + haversine(coords[i - 1], coords[i]);
     const steps = route.steps || [];

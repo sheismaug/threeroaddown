@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Nav3D from "./Nav3D";
+import { speak, speakNow, unlockSpeech, loadVoices, hasThaiVoice } from "./speech";
 
 const CENTER = [13.7375, 100.5348];
 const ZOOM = 15;
@@ -20,43 +21,7 @@ const catColor = (c) => (CAT[c]?.color || "#888");
 // แปลงรหัสการเลี้ยวของ ORS เป็นภาษาไทย
 const MAN = { 0: "เลี้ยวซ้าย", 1: "เลี้ยวขวา", 2: "เลี้ยวซ้ายหักศอก", 3: "เลี้ยวขวาหักศอก", 4: "เบี่ยงซ้าย", 5: "เบี่ยงขวา", 6: "ตรงไป", 7: "เข้าวงเวียน", 8: "ออกวงเวียน", 9: "กลับรถ", 10: "ถึงปลายทาง", 11: "เริ่มเดิน", 12: "ชิดซ้าย", 13: "ชิดขวา" };
 const thaiInstr = (st) => (MAN[st.type] || "ไปต่อ") + (st.name ? ` เข้า ${st.name}` : "");
-let _voices = [];
-let _spRefs = [];   // เก็บ reference ของ utterance ไว้ กัน GC ตัดเสียงกลางประโยค ("พูดไม่จบ/เป็นคำๆ")
-let _spLast = 0;    // เวลาเริ่มพูดล่าสุด ใช้ตรวจสถานะ "ค้าง"
-let _spWatch = null;
-function loadVoices() { try { _voices = (window.speechSynthesis && window.speechSynthesis.getVoices()) || []; } catch (e) {} }
-function hasThaiVoice() { if (!_voices.length) loadVoices(); return _voices.some((v) => /^th/i.test(v.lang)); }
-function pickVoice(lang) { if (!_voices.length) loadVoices(); const re = lang === "en" ? /^en/i : /^th/i; return _voices.find((v) => re.test(v.lang)) || null; }
-function _spWatchdog() {
-  if (_spWatch) return;
-  _spWatch = setInterval(() => {
-    try {
-      const ss = window.speechSynthesis; if (!ss) return;
-      if (ss.paused) ss.resume();                                   // กันบั๊ก Chrome หยุดพูดเองหลัง ~15 วิ
-      if (ss.speaking && Date.now() - _spLast > 12000) ss.cancel(); // สถานะ speaking ค้าง -> รีเซ็ต
-      if (!ss.speaking && !ss.pending) _spRefs = [];
-    } catch (e) {}
-  }, 3000);
-}
-// urgent=true -> ยกเลิกของเดิมแล้วพูดทันที, ไม่งั้น -> ข้ามถ้ากำลังพูดอยู่ (เว้นแต่ค้างนานเกินไป)
-function speak(text, lang, opts) {
-  try {
-    const ss = window.speechSynthesis; if (!ss || !text) return;
-    const urgent = !!(opts && opts.urgent);
-    if (ss.paused) ss.resume();
-    if (urgent) ss.cancel();
-    else if (ss.speaking || ss.pending) { if (Date.now() - _spLast > 12000) ss.cancel(); else return; }
-    const u = new SpeechSynthesisUtterance(text);
-    const v = pickVoice(lang || "th"); if (v) u.voice = v;
-    u.lang = lang === "en" ? "en-US" : "th-TH"; u.rate = 1;
-    u.onend = u.onerror = () => { _spRefs = _spRefs.filter((x) => x !== u); };
-    _spRefs.push(u); _spLast = Date.now(); _spWatchdog();
-    ss.speak(u);
-  } catch (e) {}
-}
-function speakNow(text, lang) { speak(text, lang, { urgent: true }); }
-// ปลดล็อกเสียงบนมือถือ: ต้องเรียกตอนผู้ใช้แตะปุ่ม (user gesture) ไม่งั้น iOS/Android บล็อกเสียงทั้งหมด
-function unlockSpeech() { try { if (!window.speechSynthesis) return; loadVoices(); const u = new SpeechSynthesisUtterance(" "); u.volume = 0.01; window.speechSynthesis.speak(u); _spWatchdog(); } catch (e) {} }
+// ระบบเสียง (speak/speakNow/unlockSpeech/loadVoices/hasThaiVoice) ย้ายไป ./speech แล้ว ใช้ร่วมกับ Nav3D
 const TURN_EN = { "เลี้ยวซ้าย": "turn left", "เลี้ยวขวา": "turn right", "เบี่ยงซ้าย": "keep left", "เบี่ยงขวา": "keep right", "เลี้ยวซ้ายหักศอก": "sharp left turn", "เลี้ยวขวาหักศอก": "sharp right turn", "ตรงไป": "go straight", "กลับตัว": "make a U-turn" };
 const ROAD_EN = {
   "อังรีดูนังต์": "Henri Dunant Road", "พระรามที่ 1": "Rama I Road", "พระราม 1": "Rama I Road",
