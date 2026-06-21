@@ -21,23 +21,42 @@ const catColor = (c) => (CAT[c]?.color || "#888");
 const MAN = { 0: "เลี้ยวซ้าย", 1: "เลี้ยวขวา", 2: "เลี้ยวซ้ายหักศอก", 3: "เลี้ยวขวาหักศอก", 4: "เบี่ยงซ้าย", 5: "เบี่ยงขวา", 6: "ตรงไป", 7: "เข้าวงเวียน", 8: "ออกวงเวียน", 9: "กลับรถ", 10: "ถึงปลายทาง", 11: "เริ่มเดิน", 12: "ชิดซ้าย", 13: "ชิดขวา" };
 const thaiInstr = (st) => (MAN[st.type] || "ไปต่อ") + (st.name ? ` เข้า ${st.name}` : "");
 let _voices = [];
+let _spRefs = [];   // เก็บ reference ของ utterance ไว้ กัน GC ตัดเสียงกลางประโยค ("พูดไม่จบ/เป็นคำๆ")
+let _spLast = 0;    // เวลาเริ่มพูดล่าสุด ใช้ตรวจสถานะ "ค้าง"
+let _spWatch = null;
 function loadVoices() { try { _voices = (window.speechSynthesis && window.speechSynthesis.getVoices()) || []; } catch (e) {} }
 function hasThaiVoice() { if (!_voices.length) loadVoices(); return _voices.some((v) => /^th/i.test(v.lang)); }
 function pickVoice(lang) { if (!_voices.length) loadVoices(); const re = lang === "en" ? /^en/i : /^th/i; return _voices.find((v) => re.test(v.lang)) || null; }
-function speak(text, lang) {
+function _spWatchdog() {
+  if (_spWatch) return;
+  _spWatch = setInterval(() => {
+    try {
+      const ss = window.speechSynthesis; if (!ss) return;
+      if (ss.paused) ss.resume();                                   // กันบั๊ก Chrome หยุดพูดเองหลัง ~15 วิ
+      if (ss.speaking && Date.now() - _spLast > 12000) ss.cancel(); // สถานะ speaking ค้าง -> รีเซ็ต
+      if (!ss.speaking && !ss.pending) _spRefs = [];
+    } catch (e) {}
+  }, 3000);
+}
+// urgent=true -> ยกเลิกของเดิมแล้วพูดทันที, ไม่งั้น -> ข้ามถ้ากำลังพูดอยู่ (เว้นแต่ค้างนานเกินไป)
+function speak(text, lang, opts) {
   try {
-    if (!window.speechSynthesis) return;
+    const ss = window.speechSynthesis; if (!ss || !text) return;
+    const urgent = !!(opts && opts.urgent);
+    if (ss.paused) ss.resume();
+    if (urgent) ss.cancel();
+    else if (ss.speaking || ss.pending) { if (Date.now() - _spLast > 12000) ss.cancel(); else return; }
     const u = new SpeechSynthesisUtterance(text);
-    const v = pickVoice(lang || "th");
-    if (v) u.voice = v;
-    u.lang = lang === "en" ? "en-US" : "th-TH";
-    u.rate = 1;
-    window.speechSynthesis.speak(u);
+    const v = pickVoice(lang || "th"); if (v) u.voice = v;
+    u.lang = lang === "en" ? "en-US" : "th-TH"; u.rate = 1;
+    u.onend = u.onerror = () => { _spRefs = _spRefs.filter((x) => x !== u); };
+    _spRefs.push(u); _spLast = Date.now(); _spWatchdog();
+    ss.speak(u);
   } catch (e) {}
 }
-function speakNow(text, lang) { try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) {} speak(text, lang); }
+function speakNow(text, lang) { speak(text, lang, { urgent: true }); }
 // ปลดล็อกเสียงบนมือถือ: ต้องเรียกตอนผู้ใช้แตะปุ่ม (user gesture) ไม่งั้น iOS/Android บล็อกเสียงทั้งหมด
-function unlockSpeech() { try { if (!window.speechSynthesis) return; loadVoices(); const u = new SpeechSynthesisUtterance(" "); u.volume = 0.01; window.speechSynthesis.speak(u); } catch (e) {} }
+function unlockSpeech() { try { if (!window.speechSynthesis) return; loadVoices(); const u = new SpeechSynthesisUtterance(" "); u.volume = 0.01; window.speechSynthesis.speak(u); _spWatchdog(); } catch (e) {} }
 const TURN_EN = { "เลี้ยวซ้าย": "turn left", "เลี้ยวขวา": "turn right", "เบี่ยงซ้าย": "keep left", "เบี่ยงขวา": "keep right", "เลี้ยวซ้ายหักศอก": "sharp left turn", "เลี้ยวขวาหักศอก": "sharp right turn", "ตรงไป": "go straight", "กลับตัว": "make a U-turn" };
 const ROAD_EN = {
   "อังรีดูนังต์": "Henri Dunant Road", "พระรามที่ 1": "Rama I Road", "พระราม 1": "Rama I Road",
@@ -220,7 +239,16 @@ function scoreRoutes(routes, osm, problems) {
     let num = 0, den = 0; const add = (v, w) => { if (v != null) { num += v * w; den += w; } };
     add(safe, WT.safe); add(shade, WT.shade); add(green, WT.green); add(toilet, WT.toilet);
     const comfort = den ? Math.round(num / den) : null;
-    return { ...r, hazards, cameras: cams, floodN, darkN, floodRiskN, safe, shade, green, toilet, toiletsNear: toiletsN, comfort, timeMode: WT.mode };
+    // รายชื่อห้องน้ำใกล้เส้นทาง (ชื่อ + ระยะจากต้นทาง) — ส่งให้ผู้ช่วย AI ตอบได้ว่าห้องน้ำอยู่ตรงไหนจริง ไม่ใช่เดาเอง
+    const rcum = [0]; for (let i = 1; i < r.coordinates.length; i++) rcum[i] = rcum[i - 1] + haversine(r.coordinates[i - 1], r.coordinates[i]);
+    const toiletList = [];
+    for (const t of (osm.toilets || [])) {
+      let bi = 0, bd = Infinity;
+      for (let i = 0; i < r.coordinates.length; i++) { const dd = haversine(t.pt, r.coordinates[i]); if (dd < bd) { bd = dd; bi = i; } }
+      if (bd <= 150) toiletList.push({ name: (t.tags && (t.tags.name || t.tags["name:th"])) || "ห้องน้ำสาธารณะ", along: Math.round(rcum[bi]), off: Math.round(bd) });
+    }
+    toiletList.sort((a, b) => a.along - b.along);
+    return { ...r, hazards, cameras: cams, floodN, darkN, floodRiskN, safe, shade, green, toilet, toiletsNear: toiletsN, comfort, timeMode: WT.mode, toiletList: toiletList.slice(0, 8) };
   });
 }
 function comfortColor(v) { if (v == null) return "#888"; if (v >= 70) return "#2a9d54"; if (v >= 45) return "#e9a23b"; return "#c1121f"; }
@@ -524,7 +552,17 @@ export default function MapView({ apiRef }) {
     for (const cp of c.crossings || []) {
       if (haversine(u, cp) > 60) continue;
       let ci = 0, cb = Infinity; for (let i = 0; i < n.coords.length; i++) { const dd = haversine(cp, n.coords[i]); if (dd < cb) { cb = dd; ci = i; } }
-      if (cb > 20 || ci < idx) continue;
+      if (cb > 10 || ci < idx) continue; // ต้องอยู่บนเส้นทางจริง (≤10 ม.) ไม่ใช่ทางข้ามของซอยข้างๆ
+      // เตือน "ข้ามถนน" เฉพาะเมื่อมีจุดเลี้ยวจริงของเส้นทางอยู่ใกล้หมุดทางข้าม (±25 ม.) — กันเตือนผิดตอนเดินตรงยาว
+      let nearTurn = false;
+      for (const st of n.steps) {
+        const wp = st.wpStart;
+        if (wp <= 0 || wp >= n.coords.length - 1) continue;
+        if (Math.abs(n.cum[wp] - n.cum[ci]) > 25) continue;
+        const tt = turnAt(n.coords, wp);
+        if (tt && tt !== "ตรงไป") { nearTurn = true; break; }
+      }
+      if (!nearTurn) continue;
       const al = Math.round(n.cum[ci] - n.cum[idx]);
       if (al >= 0 && al < cbest) { cbest = al; crossAhead = { dist: al, id: cp.join(",") }; }
     }

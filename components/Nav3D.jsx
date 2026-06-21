@@ -56,8 +56,35 @@ const HAZ = {
 const hz = (c) => HAZ[c] || { emoji: "⚠️", label: "จุดเสี่ยง", en: "hazard", color: "#e63946" };
 
 let _v = [];
-function speak(t, lang) { try { if (!window.speechSynthesis || !t) return; if (!_v.length) _v = window.speechSynthesis.getVoices() || []; const u = new SpeechSynthesisUtterance(t); const vo = _v.find((x) => (lang === "en" ? /^en/i : /^th/i).test(x.lang)); if (vo) u.voice = vo; u.lang = lang === "en" ? "en-US" : "th-TH"; window.speechSynthesis.speak(u); } catch (e) {} }
-function say(t, l, urgent) { try { if (!window.speechSynthesis || !t) return; if (!urgent && (window.speechSynthesis.speaking || window.speechSynthesis.pending)) return; speak(t, l); } catch (e) {} }
+let _vRefs = [];   // เก็บ reference utterance กัน GC ตัดเสียงกลางประโยค
+let _vLast = 0;    // เวลาเริ่มพูดล่าสุด ใช้ตรวจสถานะค้าง
+let _vWatch = null;
+function _vWatchdog() {
+  if (_vWatch) return;
+  _vWatch = setInterval(() => {
+    try {
+      const ss = window.speechSynthesis; if (!ss) return;
+      if (ss.paused) ss.resume();                                  // กันบั๊ก Chrome หยุดพูดเองหลัง ~15 วิ
+      if (ss.speaking && Date.now() - _vLast > 12000) ss.cancel(); // สถานะค้าง -> รีเซ็ต (กัน 3D เงียบสนิท)
+      if (!ss.speaking && !ss.pending) _vRefs = [];
+    } catch (e) {}
+  }, 3000);
+}
+function say(t, l, urgent) {
+  try {
+    const ss = window.speechSynthesis; if (!ss || !t) return;
+    if (ss.paused) ss.resume();
+    if (urgent) ss.cancel();
+    else if (ss.speaking || ss.pending) { if (Date.now() - _vLast > 12000) ss.cancel(); else return; }
+    if (!_v.length) _v = ss.getVoices() || [];
+    const u = new SpeechSynthesisUtterance(t);
+    const vo = _v.find((x) => (l === "en" ? /^en/i : /^th/i).test(x.lang)); if (vo) u.voice = vo;
+    u.lang = l === "en" ? "en-US" : "th-TH";
+    u.onend = u.onerror = () => { _vRefs = _vRefs.filter((x) => x !== u); };
+    _vRefs.push(u); _vLast = Date.now(); _vWatchdog();
+    ss.speak(u);
+  } catch (e) {}
+}
 
 function loadMapLibre() {
   return new Promise((resolve, reject) => {
