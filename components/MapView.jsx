@@ -892,9 +892,9 @@ export default function MapView({ apiRef }) {
 
         // MBK ชั้น 2 — โถงกลาง → โซน A (Don Don Donki) → ทางออกทางเชื่อม
         corridor([[13.74465, 100.52980], [13.74510, 100.52995], [13.74545, 100.53020]]);
-        corridor([[13.74510, 100.52995], [13.74500, 100.52972]], 7); // แยกเข้าโซนร้าน Donki
+        corridor([[13.74510, 100.52995], [13.74492, 100.52962]], 7); // แยกเข้าโซนร้าน Donki (ลงใต้ฝั่ง Tokyu ให้ตรงตำแหน่งจริง)
         label(13.74448, 100.52975, "MBK ชั้น 2");
-        label(13.74508, 100.52955, "DON DON DONKI", "#c85df0");
+        label(13.74483, 100.52950, "DON DON DONKI", "#c85df0");
         esc(13.74478, 100.52986);
         door(13.74545, 100.53020, "ออกทางเชื่อมหัวมุม MBK (โซน A ฝั่ง Don Don Donki)");
 
@@ -903,7 +903,6 @@ export default function MapView({ apiRef }) {
         corridor([[13.74648, 100.53096], [13.74668, 100.53120], [13.74660, 100.53150], [13.74642, 100.53176]]); // ทางหลัก: เข้า W → ออก SE
         corridor([[13.74668, 100.53120], [13.74695, 100.53135]], 7);  // แยกขึ้นไปโซนลิฟต์
         corridor([[13.74660, 100.53150], [13.74686, 100.53160]], 7);  // แยกไปห้องน้ำ
-        corridor([[13.74655, 100.53133], [13.74638, 100.53140]], 6);  // แยกลงโซนใต้
         esc(13.74663, 100.53131); esc(13.74650, 100.53164);
         lift(13.74698, 100.53138);
         wc(13.74690, 100.53164);
@@ -1030,7 +1029,7 @@ export default function MapView({ apiRef }) {
             c.polylines.forEach((pl, j) => {
               const shown = !c.picks || j === c.picks.comfortIdx || j === c.picks.fastIdx;
               if (!shown) { pl.setStyle({ opacity: 0 }); return; }
-              if (j === i) pl.setStyle({ color: "#35c4f0", weight: 6, opacity: 1, dashArray: cands[j].skywalk ? "3 9" : null }).bringToFront();
+              if (j === i) pl.setStyle({ color: "#35c4f0", weight: 6, opacity: 1, lineCap: "round", dashArray: cands[j].skywalk ? "1 10" : null }).bringToFront();
               else pl.setStyle({ color: "#888", weight: 4, opacity: 0.5, dashArray: "6 6" });
             });
             c.indoorOn = !!cands[i]?.skywalk; c.updateIndoor?.();
