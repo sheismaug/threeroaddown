@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Walk BKK · เดโม เงาตึก 3D จาก OSM</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root { --bg:#0f1419; --panel:#1a2129; --ink:#e8edf2; --muted:#93a1ad; --accent:#ffcf4a; --shade:#1b3a6b; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+  #map { position:absolute; inset:0; }
+  .panel {
+    position:absolute; z-index:1000; top:12px; left:12px; width:330px; max-width:calc(100vw - 24px);
+    background:rgba(26,33,41,.94); border:1px solid #2a3540; border-radius:14px; padding:14px 16px;
+    box-shadow:0 8px 28px rgba(0,0,0,.45); backdrop-filter: blur(4px);
+  }
+  .panel h1 { font-size:15px; margin:0 0 2px; letter-spacing:.2px; }
+  .panel .sub { font-size:11.5px; color:var(--muted); margin:0 0 12px; line-height:1.5; }
+  .row { display:flex; align-items:center; gap:10px; margin:10px 0; }
+  .row label { font-size:12px; color:var(--muted); width:54px; flex:none; }
+  input[type=range] { flex:1; accent-color:var(--accent); }
+  input[type=date] { background:#0f1419; color:var(--ink); border:1px solid #2a3540; border-radius:7px; padding:4px 6px; font-size:12px; }
+  .val { font-size:12.5px; font-variant-numeric:tabular-nums; min-width:62px; text-align:right; color:var(--accent); font-weight:600; }
+  .stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+  .stat { background:#0f1419; border:1px solid #2a3540; border-radius:9px; padding:8px 10px; }
+  .stat .k { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
+  .stat .v { font-size:18px; font-weight:700; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .shadepct .v { color:#6fb3ff; }
+  .legend { font-size:11px; color:var(--muted); margin-top:12px; line-height:1.7; }
+  .sw { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:-1px; margin-right:5px; }
+  button { background:var(--accent); color:#1a1300; border:0; border-radius:8px; padding:7px 10px; font-weight:600; font-size:12px; cursor:pointer; width:100%; margin-top:10px; }
+  button.ghost { background:#222c36; color:var(--ink); }
+  #status { font-size:11px; color:var(--muted); margin-top:8px; min-height:14px; }
+  .leaflet-container { background:#0b0f14; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <h1>☀️ เดโม เงาตึก 3D — Walk BKK</h1>
+  <p class="sub">ฉายเงาตึกจาก footprint ของ OSM (ประมาณความสูงจาก <code>building:levels</code>×3.2 ม. หรือ <code>height</code>) ตามตำแหน่งดวงอาทิตย์จริง ย่านปทุมวัน เลื่อนเวลาเพื่อดูเง��กวาด</p>
+
+  <div class="row">
+    <label>เวลา</label>
+    <input id="hour" type="range" min="5" max="19" step="0.25" value="9">
+    <span class="val" id="hourVal">09:00</span>
+  </div>
+  <div class="row">
+    <label>วันที่</label>
+    <input id="date" type="date">
+    <span class="val" id="seasonVal"></span>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="k">มุมเงยดวงอาทิตย์</div><div class="v" id="elev">–</div></div>
+    <div class="stat"><div class="k">ทิศดวงอาทิตย์</div><div class="v" id="azi">–</div></div>
+    <div class="stat"><div class="k">อาคารที่โหลด</div><div class="v" id="bcount">–</div></div>
+    <div class="stat shadepct"><div class="k">เส้นทางอยู่ในร่ม</div><div class="v" id="shade">–</div></div>
+  </div>
+
+  <button id="reload">↻ โหลดอาคารจริงจาก OSM (ในเบราว์เซอร์)</button>
+  <button id="toggleRoute" class="ghost">แสดง/ซ่อน เส้นทางเดโม</button>
+  <div id="status"></div>
+
+  <div class="legend">
+    <span class="sw" style="background:#5a6b7d"></span>อาคาร (footprint)<br>
+    <span class="sw" style="background:#1b3a6b"></span>เงาที่ตึกทอดลงพื้น ณ เวลานั้น<br>
+    <span class="sw" style="background:#ffcf4a"></span>เส้นทางเดิน · เขียว=ช่วงร่ม
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ================= ตำแหน่งดวงอาทิตย์ (อัลกอริทึมเดียวกับ MapView.jsx) =================
+function sunPosition(date, lat, lon){
+  const rad=Math.PI/180,dayMs=86400000,J1970=2440588,J2000=2451545;
+  const d=date.valueOf()/dayMs-0.5+J1970-J2000;
+  const M=rad*(357.5291+0.98560028*d);
+  const C=rad*(1.9148*Math.sin(M)+0.02*Math.sin(2*M)+0.0003*Math.sin(3*M));
+  const L=M+C+rad*102.9372+Math.PI;
+  const e=rad*23.4397;
+  const dec=Math.asin(Math.sin(L)*Math.sin(e));
+  const ra=Math.atan2(Math.sin(L)*Math.cos(e),Math.cos(L));
+  const phi=rad*lat,lw=rad*-lon;
+  const H=rad*(280.16+360.9856235*d)-lw-ra;
+  const alt=Math.asin(Math.sin(phi)*Math.sin(dec)+Math.cos(phi)*Math.cos(dec)*Math.cos(H));
+  const az=Math.atan2(Math.sin(H),Math.cos(H)*Math.sin(phi)-Math.tan(dec)*Math.cos(phi));
+  let deg=((az+Math.PI)*180/Math.PI)%360; if(deg<0)deg+=360;
+  return {azimuth:deg, elevation:alt*180/Math.PI};
+}
+// เวลาไทย (UTC+7) → Date
+function bkkDate(dateStr, hourFloat){
+  const [y,mo,d]=dateStr.split("-").map(Number);
+  const h=Math.floor(hourFloat), mi=Math.round((hourFloat-h)*60);
+  return new Date(Date.UTC(y, mo-1, d, h-7, mi, 0));
+}
+
+// ================= geo helpers =================
+const CENTER=[13.7448,100.5322];
+const COSLAT=Math.cos(CENTER[0]*Math.PI/180);
+const M_PER_DEG_LAT=110540, M_PER_DEG_LON=111320*COSLAT;
+// lon/lat -> local meters (x east, y north) รอบ CENTER
+function toM(lon,lat){ return [ (lon-CENTER[1])*M_PER_DEG_LON, (lat-CENTER[0])*M_PER_DEG_LAT ]; }
+function toLL(x,y){ return [ CENTER[0]+y/M_PER_DEG_LAT, CENTER[1]+x/M_PER_DEG_LON ]; } // -> [lat,lon]
+
+// point in polygon (ring เป็น [x,y] เมตร)
+function pip(x,y,ring){
+  let inside=false;
+  for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+    const xi=ring[i][0],yi=ring[i][1],xj=ring[j][0],yj=ring[j][1];
+    if(((yi>y)!==(yj>y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+
+// ================= ความสูงอาคาร =================
+function buildingHeight(tags){
+  if(!tags) return 12;
+  if(tags.height){ const m=parseFloat(String(tags.height).replace(",",".")); if(!isNaN(m)&&m>0) return m; }
+  if(tags["building:levels"]){ const l=parseFloat(tags["building:levels"]); if(!isNaN(l)&&l>0) return l*3.2; }
+  return 12; // ค่า default (≈4 ชั้น) — ติดป้าย confidence ต่ำ
+}
+
+// ================= แผนที่ =================
+const map=L.map("map",{zoomControl:true}).setView(CENTER,16);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{
+  attribution:'© OpenStreetMap, © CARTO', maxZoom:20, subdomains:"abcd"
+}).addTo(map);
+map.createPane("shadowPane"); map.getPane("shadowPane").style.zIndex=380;
+map.getPane("shadowPane").style.opacity=0.5; // ทำให้เงาที่ซ้อนกันดูสม่ำเสมอ
+map.createPane("bldgPane"); map.getPane("bldgPane").style.zIndex=420;
+
+let shadowLayer=L.layerGroup([],{pane:"shadowPane"}).addTo(map);
+let bldgLayer=L.layerGroup([],{pane:"bldgPane"}).addTo(map);
+let routeLayer=L.layerGroup().addTo(map);
+
+// ================= ข้อมูลอาคาร (footprint = ห่วงพิกัด [lon,lat]) =================
+// fallback ตัวอย่างรอบสยาม (เพื่อให้เรนเดอร์ได้ทันทีก่อน/หากโหลด OSM ไม่ได้)
+let BUILDINGS = sampleBuildings();
+function rect(clon,clat,wM,hM,levels){
+  const dlon=wM/2/M_PER_DEG_LON, dlat=hM/2/M_PER_DEG_LAT;
+  return { ring:[[clon-dlon,clat-dlat],[clon+dlon,clat-dlat],[clon+dlon,clat+dlat],[clon-dlon,clat+dlat]], tags:{"building:levels":String(levels)} };
+}
+function sampleBuildings(){
+  return [
+    rect(100.5340,13.7462,120,90,7),   // Siam Paragon (โดยประมาณ)
+    rect(100.5305,13.7455,90,70,6),    // MBK
+    rect(100.5322,13.7452,80,60,8),    // Siam Center/Discovery
+    rect(100.5315,13.7438,60,50,30),   // อาคารสูงตัวอย่าง
+    rect(100.5348,13.7445,70,55,25),
+    rect(100.5333,13.7430,50,40,12),
+    rect(100.5298,13.7468,55,45,5),
+  ];
+}
+
+// ================= ฉายเงา =================
+let curSun={azimuth:0,elevation:0};
+// คืน [shadowVecXm, shadowVecYm] (ทิศ + ความยาวเงาเป็นเมตร) หรือ null ถ้าดวงอาทิตย์ลับ/ต่ำ
+function shadowVec(sun){
+  if(sun.elevation<=3) return null; // ดวงอาทิตย์ลับ/ต่ำมาก → ไม่ฉายเงา (ทั้งย่านร่ม)
+  let len=12/Math.tan(sun.elevation*Math.PI/180) * 1; // จะคูณ h จริงทีหลัง; เก็บเป็นต่อเมตรความสูง
+  const perMeter=1/Math.tan(sun.elevation*Math.PI/180);
+  const dir=(sun.azimuth+180)*Math.PI/180; // เงาทอดไปทางตรงข้ามดวงอาทิตย์
+  // ทิศเข็มทิศ: 0=เหนือ, 90=ออก → x(ออก)=sin, y(เหนือ)=cos
+  return { ex:Math.sin(dir)*perMeter, ny:Math.cos(dir)*perMeter };
+}
+
+// Minkowski sum ของ footprint กับ segment [0 -> S] = footprint + footprint(เลื่อน) + quad ตามขอบ
+function shadowPolys(ringM, S){
+  const polys=[];
+  const moved=ringM.map(p=>[p[0]+S.ex,p[1]+S.ny]);
+  polys.push(ringM, moved);
+  for(let i=0;i<ringM.length;i++){
+    const a=ringM[i], b=ringM[(i+1)%ringM.length];
+    polys.push([a,b,[b[0]+S.ex,b[1]+S.ny],[a[0]+S.ex,a[1]+S.ny]]);
+  }
+  return polys;
+}
+
+function render(){
+  const dateStr=document.getElementById("date").value;
+  const hour=parseFloat(document.getElementById("hour").value);
+  const sun=sunPosition(bkkDate(dateStr,hour), CENTER[0], CENTER[1]);
+  curSun=sun;
+  document.getElementById("elev").textContent = sun.elevation.toFixed(0)+"°";
+  document.getElementById("azi").textContent  = compass(sun.azimuth);
+  document.getElementById("hourVal").textContent = fmtHour(hour);
+
+  shadowLayer.clearLayers(); bldgLayer.clearLayers();
+  const Sper = shadowVec(sun); // ต่อ 1 เมตรความสูง
+  let shadowRingsM=[]; // เก็บไว้คิดร่มเส้นทาง (footprint + Minkowski)
+
+  for(const b of BUILDINGS){
+    const ringM = b.ring.map(([lon,lat])=>toM(lon,lat));
+    // วาด footprint
+    bldgLayer.addLayer(L.polygon(ringM.map(([x,y])=>toLL(x,y)),{
+      pane:"bldgPane", color:"#7d8ea0", weight:1, fillColor:"#5a6b7d", fillOpacity:.55
+    }));
+    if(Sper){
+      const h=buildingHeight(b.tags);
+      const S={ex:Sper.ex*h, ny:Sper.ny*h};
+      const polys=shadowPolys(ringM,S);
+      for(const poly of polys){
+        shadowLayer.addLayer(L.polygon(poly.map(([x,y])=>toLL(x,y)),{
+          pane:"shadowPane", stroke:false, fillColor:"#1b3a6b", fillOpacity:1
+        }));
+      }
+      shadowRingsM.push({ring:ringM, S, h});
+    }
+  }
+  document.getElementById("bcount").textContent = BUILDINGS.length;
+  updateRoute(shadowRingsM, !!Sper);
+}
+
+// ================= เส้นทางเดโม + คำนวณ % ร่ม =================
+const ROUTE=[ // National Stadium → Siam → ลงทางใต้ (lon,lat)
+  [100.5293,13.7466],[100.5305,13.7464],[100.5318,13.7461],[100.5330,13.7458],
+  [100.5342,13.7455],[100.5346,13.7446],[100.5345,13.7432],[100.5343,13.7418]
+];
+let routeVisible=true;
+// จุด p อยู่ในเงาของอาคารไหม: p อยู่ใน Minkowski sum ⇔ มี t∈[0,1] ที่ (p - t*S) อยู่ใน footprint
+function inShadow(pM, rings){
+  for(const r of rings){
+    for(let t=0;t<=1.0001;t+=0.2){
+      if(pip(pM[0]-r.S.ex*t, pM[1]-r.S.ny*t, r.ring)) return true;
+    }
+  }
+  return false;
+}
+function updateRoute(rings, sunUp){
+  routeLayer.clearLayers();
+  if(!routeVisible){ document.getElementById("shade").textContent="–"; return; }
+  // sample ทุก ~12 ม.
+  const samplesM=[]; const segColors=[];
+  for(let i=0;i<ROUTE.length-1;i++){
+    const a=toM(...ROUTE[i]), b=toM(...ROUTE[i+1]);
+    const dist=Math.hypot(b[0]-a[0],b[1]-a[1]); const n=Math.max(1,Math.round(dist/12));
+    for(let k=0;k<n;k++){ const tt=k/n; samplesM.push([a[0]+(b[0]-a[0])*tt, a[1]+(b[1]-a[1])*tt]); }
+  }
+  samplesM.push(toM(...ROUTE[ROUTE.length-1]));
+  let shaded=0;
+  const llShaded=[], llSun=[];
+  for(const p of samplesM){
+    const sh = !sunUp || inShadow(p, rings); // ดวงอาทิตย์ลับ = ร่มทั้งเส้น
+    if(sh) shaded++;
+    const ll=toLL(p[0],p[1]);
+    L.circleMarker(ll,{pane:"bldgPane",radius:4,stroke:false,
+      fillColor: sh?"#3ddc84":"#ffcf4a", fillOpacity:.95}).addTo(routeLayer);
+  }
+  // เส้นทางหลัก
+  L.polyline(ROUTE.map(([lon,lat])=>[lat,lon]),{color:"#ffcf4a",weight:3,opacity:.5,dashArray:"4 5"}).addTo(routeLayer);
+  const pct=Math.round(shaded/samplesM.length*100);
+  document.getElementById("shade").textContent = pct+"%";
+}
+
+// ================= โหลดอาคารจริงจาก OSM (Overpass, ฝั่งเบราว์เซอร์) =================
+const BBOX="13.7385,100.5255,13.7510,100.5395"; // S,W,N,E
+const MIRRORS=["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter","https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
+async function loadOSM(){
+  const st=document.getElementById("status"); st.textContent="กำลังโหลดอาคารจาก OSM…";
+  const q=`[out:json][timeout:40];(way["building"](${BBOX});relation["building"]["type"="multipolygon"](${BBOX}););out body geom;`;
+  for(const url of MIRRORS){
+    try{
+      const c=new AbortController(); const t=setTimeout(()=>c.abort(),40000);
+      const r=await fetch(url,{method:"POST",body:"data="+encodeURIComponent(q),signal:c.signal});
+      clearTimeout(t); if(!r.ok) continue;
+      const j=await r.json();
+      const out=[];
+      for(const el of (j.elements||[])){
+        if(el.type==="way" && el.geometry && el.geometry.length>=4){
+          out.push({ ring: el.geometry.map(g=>[g.lon,g.lat]), tags: el.tags||{} });
+        } else if(el.type==="relation" && el.members){
+          const outer=el.members.find(m=>m.role==="outer"&&m.geometry);
+          if(outer) out.push({ ring: outer.geometry.map(g=>[g.lon,g.lat]), tags: el.tags||{} });
+        }
+      }
+      if(out.length){
+        const lv=out.filter(b=>b.tags["building:levels"]).length, hh=out.filter(b=>b.tags.height).length;
+        BUILDINGS=out;
+        st.textContent=`โหลดแล้ว ${out.length} อาคาร · มี levels ${lv} (${Math.round(lv/out.length*100)}%) · มี height ${hh}`;
+        render(); return;
+      }
+    }catch(e){ /* ลอง mirror ถัดไป */ }
+  }
+  st.textContent="โหลด OSM ไม่สำเร็จ (เครือข่าย/CORS) — แสดงอาคารตัวอย่างแทน";
+}
+
+// ================= UI =================
+function fmtHour(h){ const hh=Math.floor(h), mm=Math.round((h-hh)*60); return String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0"); }
+function compass(az){ const d=["เหนือ","NE","ออก","SE","ใต้","SW","ตก","NW"]; return Math.round(az)+"° "+d[Math.round(az/45)%8]; }
+function seasonLabel(dateStr){ const m=Number(dateStr.split("-")[1]); return ({12:"ฤดูหนาว",1:"ฤดูหนาว",2:"ฤดูหนาว",3:"ร้อน",4:"ร้อน",5:"ร้อน",6:"ฝน",7:"ฝน",8:"ฝน",9:"ฝน",10:"ปลายฝน",11:"ปลายฝน"})[m]||""; }
+
+const dEl=document.getElementById("date");
+dEl.value=new Date().toISOString().slice(0,10);
+document.getElementById("seasonVal").textContent=seasonLabel(dEl.value);
+document.getElementById("hour").addEventListener("input",render);
+dEl.addEventListener("change",()=>{document.getElementById("seasonVal").textContent=seasonLabel(dEl.value);render();});
+document.getElementById("reload").addEventListener("click",loadOSM);
+document.getElementById("toggleRoute").addEventListener("click",()=>{routeVisible=!routeVisible;render();});
+
+render();
+// พยายามโหลดอาคารจริงอัตโนมัติ
+loadOSM();
+</script>
+</body>
+</html>

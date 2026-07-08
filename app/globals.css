@@ -1,0 +1,106 @@
+/* ==== BDI Siam design tokens (จาก Figma: BDI-Siam) ==== */
+:root {
+  --bdi-bg-top: #3d1d5e;
+  --bdi-bg-mid: #241040;
+  --bdi-bg-deep: #150b26;
+  --bdi-surface: rgba(24, 12, 44, 0.94);
+  --bdi-surface-2: rgba(38, 20, 66, 0.94);
+  --bdi-line: rgba(255, 255, 255, 0.14);
+  --bdi-green: #b7eb3e;
+  --bdi-green-dim: #7bc943;
+  --bdi-text: #f4effc;
+  --bdi-text-dim: rgba(244, 239, 252, 0.65);
+  --bdi-danger: #ff6b6b;
+  --bdi-nav-h: 64px;
+}
+
+html, body { background: var(--bdi-bg-deep); color: var(--bdi-text); }
+
+/* ==== App shell ==== */
+.bdi-shell { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; background: linear-gradient(180deg, var(--bdi-bg-top) 0%, var(--bdi-bg-mid) 40%, var(--bdi-bg-deep) 100%); }
+
+/* จอคอม → แสดงเป็นกรอบ iPhone (430×932 ≈ iPhone 15 Pro Max) กลางจอ · จอมือถือจริง → เต็มจอ */
+@media (min-width: 700px) {
+  body { background: #08040f; }
+  .bdi-shell {
+    width: 430px; max-width: 430px; height: 932px; max-height: 94dvh;
+    margin: 3dvh auto 0; border-radius: 44px; border: 7px solid #1c1c1e;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7), 0 0 0 1.5px #3a3a3c;
+    overflow: hidden; position: relative;
+  }
+  /* dynamic island จำลอง (ลอยกลาง top bar — หัวข้อชิดซ้ายอยู่แล้ว ไม่ชนกัน) */
+  .bdi-shell::before { content: ""; position: absolute; top: 10px; left: 50%; transform: translateX(-50%); width: 108px; height: 24px; border-radius: 999px; background: #000; z-index: 3000; pointer-events: none; }
+}
+.bdi-main { flex: 1; position: relative; overflow: hidden; }
+
+/* Top bar (EXPLORE / MISSION / NOTIFICATION header) */
+.bdi-topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 1500; display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: linear-gradient(90deg, #0e0618 0%, #3d1d5e 100%); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45); }
+.bdi-topbar .bdi-avatar { width: 34px; height: 34px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #6b4d97, #2a1547); border: 2px solid rgba(255, 255, 255, 0.35); display: grid; place-items: center; font-size: 17px; }
+.bdi-topbar h1 { margin: 0; font-size: 15px; font-weight: 800; letter-spacing: 2.5px; text-transform: uppercase; color: #fff; }
+
+/* Bottom navigation */
+.bdi-nav { height: var(--bdi-nav-h); flex: none; display: flex; align-items: stretch; justify-content: space-around; background: #14081f; border-top: 1px solid rgba(183, 235, 62, 0.18); z-index: 2000; padding-bottom: env(safe-area-inset-bottom); }
+.bdi-nav button { flex: 1; background: none; border: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--bdi-text-dim); font-size: 10px; font-weight: 700; letter-spacing: 1.2px; }
+.bdi-nav button .ic { font-size: 18px; line-height: 1; padding: 4px 14px; border-radius: 10px; }
+.bdi-nav button.on { color: var(--bdi-green); }
+.bdi-nav button.on .ic { background: rgba(183, 235, 62, 0.16); outline: 1.5px solid var(--bdi-green); }
+
+/* Chips (layer toggles) */
+.bdi-chips { position: absolute; left: 0; right: 0; z-index: 1400; display: flex; gap: 8px; padding: 8px 12px; overflow-x: auto; scrollbar-width: none; }
+.bdi-chips::-webkit-scrollbar { display: none; }
+.bdi-chip { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px; border-radius: 999px; font-size: 12.5px; font-weight: 700; cursor: pointer; border: 1px solid var(--bdi-line); background: rgba(16, 8, 32, 0.88); color: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); white-space: nowrap; }
+.bdi-chip.on { background: var(--bdi-green); color: #14081f; border-color: var(--bdi-green); }
+
+/* Cards / sheets */
+.bdi-card { background: var(--bdi-surface); border: 1px solid var(--bdi-line); border-radius: 14px; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45); color: var(--bdi-text); }
+.bdi-sheet-handle { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; cursor: pointer; font-weight: 700; font-size: 14px; }
+.bdi-input { width: 100%; box-sizing: border-box; padding: 11px 12px 11px 34px; border-radius: 10px; border: 1px solid var(--bdi-line); background: rgba(10, 4, 22, 0.75); color: var(--bdi-text); font-size: 14px; outline: none; }
+.bdi-input:focus { border-color: var(--bdi-green); }
+.bdi-input::placeholder { color: var(--bdi-text-dim); }
+
+/* Route option card */
+.bdi-route-opt { display: block; width: 100%; text-align: left; cursor: pointer; margin: 6px 0; padding: 10px 12px; border-radius: 12px; font-size: 13px; border: 1px solid var(--bdi-line); background: rgba(10, 4, 22, 0.55); color: var(--bdi-text); }
+.bdi-route-opt.on { border: 1.5px solid var(--bdi-green); background: rgba(183, 235, 62, 0.1); }
+.bdi-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; background: var(--bdi-green); color: #14081f; }
+.bdi-stats { display: flex; gap: 10px; flex-wrap: wrap; color: var(--bdi-text-dim); font-size: 11.5px; margin-top: 4px; }
+
+/* Gamification HUD (🔥 เดิน 5 วันติด) */
+.bdi-hud { position: absolute; left: 14px; right: 14px; z-index: 1250; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 16px; background: rgba(16, 8, 32, 0.92); border: 1px solid rgba(183, 235, 62, 0.3); box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5); }
+.bdi-hud .ring { width: 46px; height: 46px; flex: none; border-radius: 50%; display: grid; place-items: center; font-size: 20px; background: conic-gradient(var(--bdi-green) var(--pct, 70%), rgba(255, 255, 255, 0.12) 0); }
+.bdi-hud .ring > div { width: 36px; height: 36px; border-radius: 50%; background: #14081f; display: grid; place-items: center; }
+
+/* Buttons */
+.bdi-btn { display: block; width: 100%; padding: 11px; border: none; border-radius: 11px; background: var(--bdi-green); color: #14081f; font-weight: 800; font-size: 14px; cursor: pointer; }
+.bdi-btn.ghost { background: rgba(255, 255, 255, 0.1); color: var(--bdi-text); border: 1px solid var(--bdi-line); }
+
+/* Mission / Notification pages */
+.bdi-page { position: absolute; inset: 0; overflow-y: auto; padding: 62px 16px 20px; }
+.bdi-stat-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+.bdi-tile { border-radius: 14px; padding: 14px; background: var(--bdi-surface-2); border: 1px solid var(--bdi-line); text-align: center; }
+.bdi-tile b { display: block; font-size: 26px; color: var(--bdi-green); }
+.bdi-tile span { font-size: 12px; color: var(--bdi-text-dim); }
+.bdi-coupon { border-radius: 14px; background: var(--bdi-surface-2); border: 1px solid var(--bdi-line); margin: 8px 0; overflow: hidden; }
+.bdi-coupon .body { padding: 12px 14px; }
+.bdi-coupon .foot { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; border-top: 1px dashed var(--bdi-line); font-size: 11.5px; color: var(--bdi-text-dim); }
+.bdi-coupon .use { background: var(--bdi-green); color: #14081f; border: none; border-radius: 999px; padding: 5px 14px; font-weight: 800; font-size: 12px; cursor: pointer; }
+.bdi-noti { border-radius: 14px; background: var(--bdi-surface-2); border: 1px solid var(--bdi-line); margin: 8px 0; padding: 12px 14px; }
+.bdi-noti .t { font-weight: 800; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.bdi-noti .d { font-size: 13px; color: var(--bdi-text-dim); margin-top: 4px; }
+.bdi-noti .m { display: flex; justify-content: space-between; font-size: 11px; color: var(--bdi-text-dim); margin-top: 8px; }
+.bdi-h3 { display: flex; justify-content: space-between; align-items: baseline; margin: 16px 0 6px; font-size: 15px; font-weight: 800; }
+.bdi-h3 a { font-size: 12px; color: var(--bdi-green); text-decoration: none; }
+
+/* ==== แผนที่โทนม่วงเข้มตาม Figma ==== */
+.bdi-mapwrap .leaflet-tile-pane { filter: grayscale(0.72) brightness(0.92) sepia(0.35) hue-rotate(215deg) saturate(2.2) contrast(0.95); }
+.bdi-mapwrap .leaflet-container { background: var(--bdi-bg-deep); }
+.bdi-mapwrap .leaflet-control-attribution { background: rgba(16, 8, 32, 0.7); color: var(--bdi-text-dim); }
+.bdi-mapwrap .leaflet-control-attribution a { color: var(--bdi-text-dim); }
+.bdi-bulb { width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #ffe97a, #f7c948 65%, #b8860b); box-shadow: 0 0 10px 3px rgba(255, 220, 90, 0.55); display: grid; place-items: center; font-size: 12px; }
+.bdi-cross-ic { width: 12px; height: 12px; border-radius: 4px; background: #fff; border: 2.5px solid #c85df0; box-sizing: border-box; box-shadow: 0 0 5px rgba(0, 0, 0, 0.45); }
+
+/* ไอคอนแผนผังในตึก (ตาม Figma: Siam_dis_f2) */
+.bdi-entry { width: 16px; height: 16px; border-radius: 50%; background: #d8f56a; border: 2px solid #fff; box-shadow: 0 0 0 9px rgba(216, 245, 106, 0.28), 0 0 20px 7px rgba(216, 245, 106, 0.5); }
+.bdi-esc { display: flex; gap: 2.5px; transform: rotate(-30deg); }
+.bdi-esc i { width: 4px; height: 15px; background: #c85df0; border-radius: 2px; display: block; }
+.bdi-lift { width: 17px; height: 17px; border-radius: 4px; background: #c85df0; color: #fff; font-size: 10px; font-weight: 800; display: grid; place-items: center; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5); }
+.bdi-wc { background: #c85df0; color: #fff; border-radius: 4px; font-size: 9px; font-weight: 800; padding: 1px 4px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5); }

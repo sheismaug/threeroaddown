@@ -1,0 +1,97 @@
+<svg viewBox="0 0 720 736" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', 'Noto Sans Thai', system-ui, -apple-system, sans-serif">
+<title>การคำนวณแดด/ร่มบนเส้นทางเดิน — Walk BKK</title>
+<defs>
+  <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M0 0 L10 5 L0 10 z" fill="#5c6b7a"/>
+  </marker>
+  <style>
+    .card { fill:#f4f6f9; stroke:#e2e6eb; stroke-width:1.5; }
+    .num  { fill:#f5a623; }
+    .numT { fill:#fff; font-weight:700; font-size:18px; }
+    .ttl  { fill:#1a2129; font-weight:700; font-size:16px; }
+    .sub  { fill:#5c6b7a; font-size:12.5px; }
+    .frm  { fill:#2563a8; font-size:12.5px; font-style:italic; }
+    .bldg { fill:#8a93a3; stroke:#6b7482; }
+    .gnd  { stroke:#c3cad2; stroke-width:1.5; }
+    .lbl  { fill:#5c6b7a; font-size:10.5px; }
+  </style>
+</defs>
+
+<rect x="0" y="0" width="720" height="736" fill="#ffffff"/>
+
+<!-- header -->
+<text x="36" y="44" fill="#1a2129" font-size="23" font-weight="800">การคำนวณ แดด / ร่ม บนเส้นทางเดิน</text>
+<text x="36" y="68" fill="#5c6b7a" font-size="13.5">Walk BKK · เงาตึก 3D จากตำแหน่งดวงอาทิตย์จริง + ความสูงตึกจริง</text>
+<rect x="36" y="80" width="648" height="2.5" rx="1" fill="#f5a623"/>
+
+<!-- ===== STEP 1 ===== -->
+<rect class="card" x="20" y="100" width="680" height="116" rx="14"/>
+<circle class="num" cx="58" cy="134" r="17"/><text class="numT" x="58" y="140" text-anchor="middle">1</text>
+<g>
+  <line class="gnd" x1="95" y1="196" x2="250" y2="196"/>
+  <circle cx="105" cy="196" r="3.5" fill="#1a2129"/>
+  <circle cx="232" cy="134" r="13" fill="#f5a623"/>
+  <g stroke="#f5a623" stroke-width="2"><line x1="232" y1="114" x2="232" y2="107"/><line x1="252" y1="134" x2="259" y2="134"/><line x1="246" y1="120" x2="251" y2="115"/></g>
+  <line x1="105" y1="196" x2="232" y2="134" stroke="#f5a623" stroke-width="2" stroke-dasharray="4 3"/>
+  <path d="M135 196 A30 30 0 0 0 127 179" fill="none" stroke="#5c6b7a" stroke-width="1.3"/>
+  <text class="lbl" x="140" y="189">มุมเงย</text>
+</g>
+<text class="ttl" x="290" y="138">หาตำแหน่งดวงอาทิตย์</text>
+<text class="sub" x="290" y="160">จากวัน-เวลา + พิกัด คำนวณเอง (SunCalc)</text>
+<text class="sub" x="290" y="180">ได้ <tspan fill="#1a2129" font-weight="700">ทิศ (azimuth)</tspan> และ <tspan fill="#1a2129" font-weight="700">มุมเงย (elevation)</tspan></text>
+
+<line x1="360" y1="218" x2="360" y2="234" stroke="#5c6b7a" stroke-width="1.5" marker-end="url(#ar)"/>
+
+<!-- ===== STEP 2 ===== -->
+<rect class="card" x="20" y="238" width="680" height="116" rx="14"/>
+<circle class="num" cx="58" cy="272" r="17"/><text class="numT" x="58" y="278" text-anchor="middle">2</text>
+<g>
+  <line class="gnd" x1="95" y1="332" x2="250" y2="332"/>
+  <rect class="bldg" x="150" y="264" width="46" height="68"/>
+  <line x1="135" y1="264" x2="135" y2="332" stroke="#2563a8" stroke-width="1.6" marker-start="url(#ar)" marker-end="url(#ar)"/>
+  <text x="118" y="302" fill="#2563a8" font-weight="700" font-size="13">h</text>
+</g>
+<text class="ttl" x="290" y="276">รู้ความสูงตึก (h)</text>
+<text class="sub" x="290" y="298">วัดจริงจากดาวเทียม (GOB 2.5D) เป็นหลัก</text>
+<text class="sub" x="290" y="318">ไม่มี → OSM levels → เดาชนิด → default</text>
+
+<line x1="360" y1="356" x2="360" y2="372" stroke="#5c6b7a" stroke-width="1.5" marker-end="url(#ar)"/>
+
+<!-- ===== STEP 3 ===== -->
+<rect class="card" x="20" y="376" width="680" height="116" rx="14"/>
+<circle class="num" cx="58" cy="410" r="17"/><text class="numT" x="58" y="416" text-anchor="middle">3</text>
+<g>
+  <line class="gnd" x1="95" y1="470" x2="265" y2="470"/>
+  <circle cx="112" cy="396" r="10" fill="#f5a623"/>
+  <rect class="bldg" x="170" y="432" width="40" height="38"/>
+  <polygon points="170,470 210,470 252,470 212,470" fill="#1b3a6b" opacity="0.45"/>
+  <polygon points="170,470 210,432 252,470" fill="#1b3a6b" opacity="0.18"/>
+  <line x1="112" y1="396" x2="252" y2="470" stroke="#f5a623" stroke-width="1.6" stroke-dasharray="4 3"/>
+  <text class="lbl" x="216" y="484" fill="#1b3a6b">เงา</text>
+</g>
+<text class="ttl" x="290" y="410">ฉายเงาตึกลงพื้น</text>
+<text class="frm" x="290" y="433">ทิศเงา = ทิศแดด + 180°</text>
+<text class="frm" x="290" y="453">ยาวเงา = h ÷ tan(มุมเงย)</text>
+<text class="sub" x="290" y="475">แดดสูง → เงาสั้น · แดดต่ำ → เงายาว</text>
+
+<line x1="360" y1="494" x2="360" y2="510" stroke="#5c6b7a" stroke-width="1.5" marker-end="url(#ar)"/>
+
+<!-- ===== STEP 4 ===== -->
+<rect class="card" x="20" y="514" width="680" height="128" rx="14"/>
+<circle class="num" cx="58" cy="548" r="17"/><text class="numT" x="58" y="554" text-anchor="middle">4</text>
+<g>
+  <path d="M100 616 Q150 576 200 596 T270 564" fill="none" stroke="#9aa6b2" stroke-width="2" stroke-dasharray="3 3"/>
+  <circle cx="100" cy="616" r="4.5" fill="#e0a200"/>
+  <circle cx="135" cy="592" r="4.5" fill="#2b9d5f"/>
+  <circle cx="168" cy="590" r="4.5" fill="#2b9d5f"/>
+  <circle cx="200" cy="596" r="4.5" fill="#e0a200"/>
+  <circle cx="233" cy="579" r="4.5" fill="#2b9d5f"/>
+  <circle cx="270" cy="564" r="4.5" fill="#2b9d5f"/>
+</g>
+<text class="ttl" x="290" y="552">คิด % ร่มของเส้นทาง</text>
+<text class="sub" x="290" y="574">สุ่มจุดทุก ~10 ม. เช็คว่าตกในเงาตึกไหม</text>
+<text class="sub" x="290" y="594"><tspan fill="#2b9d5f" font-weight="700">●</tspan> จุดในเงา = ร่ม&#160;&#160;&#160;<tspan fill="#e0a200" font-weight="700">●</tspan> โดนแดด</text>
+<text class="sub" x="290" y="614"><tspan fill="#1a2129" font-weight="700">% ร่ม = จุดในเงา ÷ จุดทั้งหมด</tspan> (อัปเดตสดตามเวลา)</text>
+
+<text x="36" y="680" fill="#9aa6b2" font-size="11">เดโมคิดเงาตึก · แอปจริงรวมต้นไม้ฝั่งบังแดด + ทางมีหลังคา/skywalk เป็นคะแนนร่มเดียว</text>
+</svg>

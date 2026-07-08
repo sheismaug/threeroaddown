@@ -66,9 +66,9 @@ export default function ChatBox({ mapApi }) {
       <button
         onClick={() => setOpen(true)}
         style={{
-          position: "fixed", right: 16, bottom: 16, zIndex: 1200,
-          background: "#1d6fb8", color: "white", border: "none", cursor: "pointer",
-          padding: "12px 18px", borderRadius: 24, fontSize: 15, fontWeight: 700,
+          position: "absolute", right: 14, bottom: 158, zIndex: 1200,
+          background: "var(--bdi-green)", color: "#14081f", border: "none", cursor: "pointer",
+          padding: "11px 16px", borderRadius: 24, fontSize: 14, fontWeight: 800,
           boxShadow: "0 3px 10px rgba(0,0,0,.3)",
         }}
       >
@@ -80,12 +80,12 @@ export default function ChatBox({ mapApi }) {
   return (
     <div
       style={{
-        position: "fixed", right: 16, bottom: 16, zIndex: 1350, width: 340, maxWidth: "92vw",
+        position: "absolute", right: 14, bottom: 78, zIndex: 1350, width: 340, maxWidth: "92%",
         height: 460, maxHeight: "52vh", background: "white", borderRadius: 14,
         boxShadow: "0 4px 20px rgba(0,0,0,.3)", display: "flex", flexDirection: "column", overflow: "hidden",
       }}
     >
-      <div style={{ background: "#1d6fb8", color: "white", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div style={{ background: "linear-gradient(90deg,#0e0618,#3d1d5e)", color: "white", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <b>🤖 AI ผู้ช่วยเดิน · Typhoon ThaiLLM</b>
         <span onClick={() => setOpen(false)} style={{ cursor: "pointer", fontSize: 18 }}>✕</span>
       </div>

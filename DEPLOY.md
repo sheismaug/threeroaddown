@@ -51,9 +51,10 @@ git push -u origin main
 ## ก้าวที่ 3 — ตั้งค่า + กด Deploy
 
 1. หน้า Configure Project: Vercel จะ **ตรวจเจอ Next.js เอง** (Framework Preset = Next.js) — ปล่อยค่า default ไว้ทั้งหมด ไม่ต้องแก้
-2. **Environment Variables** (ส่วนนี้ข้ามไปก่อนได้!)
-   - แผนที่ + หมุด Traffy **ทำงานได้เลยโดยไม่ต้องใส่ key** (CKAN ไม่ต้องใช้ key)
-   - ค่อยมาเพิ่ม key ทีหลังตอนทำ B3 (routing) / B6 (แชต) — ดูหัวข้อล่าง
+2. **Environment Variables** — ⚠️ **ต้องใส่ `ORS_API_KEY` ตั้งแต่ตอนนี้!**
+   - ฟีเจอร์หลักของ demo (หาเส้นทาง/เส้นเกาะไฟกลางคืน) **ใช้ `ORS_API_KEY`** — ถ้าไม่ใส่ กดค้นแล้วขึ้น error ไม่มีเส้นเลย
+   - เพิ่ม: Name = `ORS_API_KEY` · Value = token จาก openrouteservice.org (ตัวเดียวกับที่อยู่ใน `.env.local` ในเครื่อง) · Environment = Production + Preview
+   - แผนที่ + หมุด Traffy ทำงานได้โดยไม่ต้องใช้ key (CKAN ฟรี) · แชต Typhoon (ตัดออกแล้ว) ไม่ต้องใส่
 3. กด **Deploy** → รอ ~1–2 นาที
 4. ได้ URL จริง เช่น `https://walkbkk.vercel.app` — กดเข้าไปดูแผนที่ปทุมวันได้เลย 🎉
 

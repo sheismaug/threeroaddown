@@ -1,3 +1,5 @@
+import "./globals.css";
+
 export const metadata = {
   title: "เดินกรุงเทพ — Walk BKK",
   description: "แอพช่วยให้คนเดินกรุงเทพได้ประสบการณ์ดีที่สุด — ปลอดภัย ร่ม สบาย",

@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Walk BKK · เดโม เงาตึก 3D — Centerpoint → MBK</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<style>
+  :root { --bg:#0f1419; --panel:#161d25; --ink:#eaf0f6; --muted:#90a0ad; --accent:#ffcf4a; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); }
+  #map { position:absolute; inset:0; }
+  .panel {
+    position:absolute; z-index:5; top:12px; left:12px; width:340px; max-width:calc(100vw - 24px);
+    background:rgba(22,29,37,.93); border:1px solid #2a3540; border-radius:14px; padding:14px 16px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5); backdrop-filter:blur(6px);
+  }
+  h1 { font-size:15px; margin:0 0 3px; }
+  .sub { font-size:11.5px; color:var(--muted); margin:0 0 12px; line-height:1.55; }
+  .row { display:flex; align-items:center; gap:10px; margin:9px 0; }
+  .row label { font-size:12px; color:var(--muted); width:48px; flex:none; }
+  input[type=range]{ flex:1; accent-color:var(--accent); }
+  input[type=date]{ background:#0f1419; color:var(--ink); border:1px solid #2a3540; border-radius:7px; padding:4px 6px; font-size:12px; }
+  .val { font-size:12.5px; min-width:60px; text-align:right; color:var(--accent); font-weight:600; font-variant-numeric:tabular-nums; }
+  .stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+  .stat { background:#0f1419; border:1px solid #2a3540; border-radius:9px; padding:7px 10px; }
+  .stat .k { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
+  .stat .v { font-size:18px; font-weight:700; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .shadepct .v { color:#6fb3ff; }
+  .btns { display:flex; gap:8px; margin-top:11px; }
+  button { flex:1; background:var(--accent); color:#1a1300; border:0; border-radius:8px; padding:8px; font-weight:600; font-size:12px; cursor:pointer; }
+  button.ghost { background:#222c36; color:var(--ink); }
+  #status { font-size:11px; color:var(--muted); margin-top:8px; min-height:14px; }
+  .legend { font-size:11px; color:var(--muted); margin-top:11px; line-height:1.7; }
+  /* icon จุดเปลี่ยนระดับบนเส้นทาง (ขึ้น/ลง skywalk) */
+  .lvl { width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+         font-size:12px; background:rgba(11,15,20,.92); border:1.5px solid #9fb6d4; pointer-events:none; }
+  /* การ์ดเลือกเส้นทาง: ร่มสุด vs เร็วสุด */
+  .rcard { background:#0f1419; border:1.5px solid #2a3540; border-radius:10px; padding:8px 10px; cursor:pointer; }
+  .rcard .t { font-size:12.5px; font-weight:700; }
+  .rcard .d { font-size:11px; color:var(--muted); margin-top:3px; line-height:1.5; font-variant-numeric:tabular-nums; }
+  .rcard.sel { border-color:var(--accent); background:#1a2129; }
+  .sw { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:-1px; margin-right:6px; }
+  .hint { font-size:10.5px; color:#6a7884; margin-top:9px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <h1>🌆 เงาตึก 3D — MBK → BTS สยาม</h1>
+  <p class="sub">มุมมอง 3D: ตึกถูกยกตามความสูงประมาณการ (<code>building:levels</code>×3.2 ม. / <code>height</code>) แล้วทอดเงาลงพื้นตามดวงอาทิตย์จริง · เลื่อนเวลาเพื่อดูเงากวาด</p>
+
+  <div class="row"><label>เวลา</label><input id="hour" type="range" min="5.5" max="18.5" step="0.25" value="9"><span class="val" id="hourVal">09:00</span></div>
+  <div class="row"><label>วันที่</label><input id="date" type="date"><span class="val" id="seasonVal"></span></div>
+
+  <div class="stats">
+    <div class="stat"><div class="k">มุมเงยดวงอาทิตย์</div><div class="v" id="elev">–</div></div>
+    <div class="stat"><div class="k">ทิศดวงอาทิตย์</div><div class="v" id="azi">–</div></div>
+    <div class="stat"><div class="k">อาคารที่โหลด</div><div class="v" id="bcount">–</div></div>
+    <div class="stat shadepct"><div class="k">เส้นทางอยู่ในร่ม</div><div class="v" id="shade">–</div></div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
+    <div class="rcard sel" id="card-cool"><div class="t">🌳 ทางร่มสุด</div><div class="d" id="cool-stats">กำลังคำนวณ…</div></div>
+    <div class="rcard" id="card-fast"><div class="t">⚡ ทางเร็วสุด</div><div class="d" id="fast-stats">กำลังคำนวณ…</div></div>
+  </div>
+  <div class="btns" style="margin-top:8px">
+    <button id="route" class="ghost">⤢ จัดมุม</button>
+    <button id="reroute" class="ghost">↻ คำนวณเส้นทางใหม่</button>
+    <button id="saveNet" class="ghost" style="flex:0 0 auto" title="บันทึกโครงข่ายเป็นไฟล์ — วางข้าง html แล้วเดโมออฟไลน์ได้">💾</button>
+  </div>
+  <div class="btns" style="margin-top:8px">
+    <button id="view3d" class="ghost">มุมบน-ลง-ล่าง</button>
+    <button id="reload" class="ghost">↻ ตึก OSM</button>
+    <button id="loadH" class="ghost">📐 ความสูงจริง</button>
+    <button id="debug" class="ghost" style="flex:0 0 auto" title="โชว์สี confidence ความสูงตึก (ข้อมูล dev)">🔧</button>
+  </div>
+  <input id="heightfile" type="file" accept=".geojson,.json,application/geo+json" style="display:none">
+  <div id="status"></div>
+  <div id="netinfo" style="font-size:10.5px;color:#6a7884;margin-top:4px;min-height:13px"></div>
+  <div id="conf" style="display:none;font-size:11px;color:var(--muted);margin-top:10px;line-height:1.6"></div>
+  <div class="legend">
+    <span class="sw" style="background:#3ddc84"></span>เดินในร่ม · <span class="sw" style="background:#ffcf4a"></span>โดนแดด · <span style="letter-spacing:1px;font-weight:700">╌╌</span> เดินทะลุในอาคาร
+    <div id="legendDebug" style="display:none">
+      ความเชื่อมั่น "ความสูงตึก" (โหมด dev):<br>
+      <span class="sw" style="background:#2bb6a3"></span>วัดจริง (ดาวเทียม) · <span class="sw" style="background:#6f8499"></span>OSM (height/levels)<br>
+      <span class="sw" style="background:#8a8170"></span>เดาจากชนิด · <span class="sw" style="background:#b07b43"></span>default เดาล้วน<br>
+      <span class="sw" style="background:#16335e"></span>เงาที่ทอดลงพื้น<br>
+      โครงข่าย: <span class="sw" style="background:#3ddc84"></span>ร่ม <span class="sw" style="background:#ffcf4a"></span>แดด <span class="sw" style="background:#5aa7ff"></span>ใต้หลังคา · เส้นหนา=ยกระดับ
+    </div>
+  </div>
+  <div class="hint">ลากเมาส์ = หมุน/เอียงมุมกล้อง · สกอลล์ = ซูม</div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="walkbkk_heights_2023.js"></script><!-- ความสูงจริง (GEE/GOB 2.5D) ถ้ามี จะโหลดอัตโนมัติ -->
+<script src="walkbkk_net_2026.js"></script><!-- โครงข่ายทางเท้าแบบฝัง (สร้างด้วยปุ่ม 💾) ถ้าไม่มีไฟล์ก็แค่ 404 ใน console ไม่เป็นไร -->
+<script>
+// ===== ตำแหน่งดวงอาทิตย์ (อัลกอริทึมเดียวกับ MapView.jsx) =====
+function sunPosition(date, lat, lon){
+  const rad=Math.PI/180,dayMs=86400000,J1970=2440588,J2000=2451545;
+  const d=date.valueOf()/dayMs-0.5+J1970-J2000;
+  const M=rad*(357.5291+0.98560028*d);
+  const C=rad*(1.9148*Math.sin(M)+0.02*Math.sin(2*M)+0.0003*Math.sin(3*M));
+  const L=M+C+rad*102.9372+Math.PI, e=rad*23.4397;
+  const dec=Math.asin(Math.sin(L)*Math.sin(e));
+  const ra=Math.atan2(Math.sin(L)*Math.cos(e),Math.cos(L));
+  const phi=rad*lat, lw=rad*-lon;
+  const H=rad*(280.16+360.9856235*d)-lw-ra;
+  const alt=Math.asin(Math.sin(phi)*Math.sin(dec)+Math.cos(phi)*Math.cos(dec)*Math.cos(H));
+  const az=Math.atan2(Math.sin(H),Math.cos(H)*Math.sin(phi)-Math.tan(dec)*Math.cos(phi));
+  let deg=((az+Math.PI)*180/Math.PI)%360; if(deg<0)deg+=360;
+  return {azimuth:deg, elevation:alt*180/Math.PI};
+}
+function bkkDate(s,h){ const [y,mo,d]=s.split("-").map(Number); const hh=Math.floor(h),mi=Math.round((h-hh)*60); return new Date(Date.UTC(y,mo-1,d,hh-7,mi,0)); }
+
+// ===== geo / scale =====
+const CENTER=[100.5321,13.7449]; // lon,lat (กึ่งกลาง Centerpoint↔MBK)
+const COSLAT=Math.cos(CENTER[1]*Math.PI/180);
+const M_LAT=110540, M_LON=111320*COSLAT;
+
+// default ตามชนิดอาคาร (เมตร) — เดาความสูงเมื่อ OSM ไม่มี height/levels
+const TYPE_H={ skyscraper:120, tower:80, hotel:45, apartments:42, residential:18, dormitory:32,
+  commercial:32, office:42, retail:16, supermarket:12, mall:26, kiosk:4,
+  hospital:38, clinic:14, university:28, college:28, school:12, public:22, government:26,
+  train_station:16, transportation:12, parking:16, industrial:11, warehouse:11, factory:14,
+  church:18, temple:14, mosque:16, chapel:10, shrine:8,
+  house:7, detached:8, semidetached_house:8, terrace:9, bungalow:5, cabin:4,
+  hut:3, shed:3, garage:3, garages:4, roof:4, carport:3, construction:14 };
+// คืน { h: ความสูง(ม.), conf: ความเชื่อมั่น 'high'|'med'|'low' }
+function buildingHeight(t){
+  if(!t) return {h:12,conf:"low"};
+  if(t.height){ const m=parseFloat(String(t.height).replace(",",".")); if(m>0) return {h:m,conf:(t._src==="sat"?"sat":"high")}; }
+  if(t["building:levels"]){ const l=parseFloat(t["building:levels"]); if(l>0) return {h:l*3.2,conf:"high"}; }
+  const bt=(t.building||"").toLowerCase();
+  if(TYPE_H[bt]) return {h:TYPE_H[bt],conf:"med"};
+  if(t.amenity==="hospital") return {h:38,conf:"med"};
+  if(t.tourism==="hotel"||t.amenity==="hotel") return {h:45,conf:"med"};
+  if(t.office) return {h:42,conf:"med"};
+  if(t.shop) return {h:14,conf:"med"};
+  return {h:12,conf:"low"}; // ไม่มีเบาะแสเลย
+}
+// เวกเตอร์เงา "ต่อความสูง 1 เมตร" (องศา lon/lat) — null ถ้าดวงอาทิตย์ต่ำ
+function shadowPerM(sun){
+  if(sun.elevation<=3) return null;
+  const k=1/Math.tan(sun.elevation*Math.PI/180);
+  const dir=(sun.azimuth+180)*Math.PI/180;       // เงาทอดตรงข้ามดวงอาทิตย์
+  return { dLon:(Math.sin(dir)*k)/M_LON, dLat:(Math.cos(dir)*k)/M_LAT };
+}
+function pip(x,y,r){ let c=false; for(let i=0,j=r.length-1;i<r.length;j=i++){const xi=r[i][0],yi=r[i][1],xj=r[j][0],yj=r[j][1]; if(((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi)) c=!c;} return c; }
+
+// ===== ข้อมูลอาคาร (ring = [[lon,lat],...]) =====
+function rect(clon,clat,wM,hM,lv){ const dlon=wM/2/M_LON,dlat=hM/2/M_LAT;
+  return { ring:[[clon-dlon,clat-dlat],[clon+dlon,clat-dlat],[clon+dlon,clat+dlat],[clon-dlon,clat+dlat],[clon-dlon,clat-dlat]], tags:{"building:levels":String(lv)} }; }
+let BUILDINGS=[
+  rect(100.5300,13.7446,95,75,8),   // MBK Center
+  rect(100.5316,13.7440,60,45,30),  // ตึกสูงริมพระราม1 (ตัวอย่าง)
+  rect(100.5328,13.7443,70,50,7),   // Siam Square One area
+  rect(100.5338,13.7452,55,45,6),   // Centerpoint Siam Square
+  rect(100.5345,13.7456,120,85,7),  // Siam Paragon side
+  rect(100.5310,13.7455,50,40,25),
+  rect(100.5325,13.7458,60,45,9),
+];
+
+// ===== เส้นทาง MBK → BTS สยาม: คำนวณจริงจากโครงข่ายทางเท้า OSM (ไม่อิง Figma แล้ว) =====
+const START_PT=[100.5300,13.7450]; // MBK Center
+const END_PT=[100.5342,13.7456];   // BTS สยาม (Siam station)
+// จุดในเส้นทาง = [lon, lat, indoor(0/1), elevM] — indoor→เส้นประ, elev→ribbon ลอยระดับ skywalk
+let ROUTE=null;                    // เส้นที่เลือกโชว์ (คำนวณจากกราฟ)
+let ROUTES={cool:null,fast:null};  // ผลลัพธ์ 2 แบบ: ร่มสุด / เร็วสุด
+let SELECTED="cool";
+
+// ===== ระดับความสูงพื้น Skywalk (พื้น deck สร้างจากข้อมูล OSM จริงใน buildNet — เลิกวาดมือจาก Figma แล้ว) =====
+const DECK_BASE=5.0, DECK_TOP=6.0;               // เมตรเหนือถนน — ยกเป็น 3D ให้รูปทรงบอกเองว่าเป็นทางลอยฟ้า
+function corridorPoly(line,w){ // ขยายเส้นกลางเป็นแถบกว้าง w เมตร
+  const L=[],R=[];
+  for(let i=0;i<line.length;i++){
+    const a=line[Math.max(0,i-1)], b=line[Math.min(line.length-1,i+1)];
+    let ex=(b[0]-a[0])*M_LON, ny=(b[1]-a[1])*M_LAT;
+    const len=Math.hypot(ex,ny)||1; ex/=len; ny/=len;
+    const px=-ny*w/2, py=ex*w/2;
+    L.push([line[i][0]+px/M_LON, line[i][1]+py/M_LAT]);
+    R.push([line[i][0]-px/M_LON, line[i][1]-py/M_LAT]);
+  }
+  R.reverse();
+  const ring=[...L,...R]; ring.push(ring[0]);
+  return ring;
+}
+// พื้น deck + เสา สร้างจากช่วงทางยกระดับใน OSM (elv>0) — ตำแหน่งตรงกับความจริง ไม่มีผี Figma อีก
+function deckGeoFromNet(pack){
+  const feats=[], pfeats=[], seen=new Set(), dx=0.7/M_LON, dy=0.7/M_LAT;
+  for(const [ia,ib,len,cov,elv] of pack.edges){
+    if(!elv) continue;
+    const a=pack.nodes[ia], b=pack.nodes[ib];
+    feats.push({type:"Feature",properties:{},geometry:{type:"Polygon",coordinates:[corridorPoly([a,b],5)]}});
+    for(const i of [ia,ib]) if(!seen.has(i)){ seen.add(i); const n=pack.nodes[i]; // เสาที่ทุกโหนดยกระดับ
+      pfeats.push({type:"Feature",properties:{},geometry:{type:"Polygon",
+        coordinates:[[[n[0]-dx,n[1]-dy],[n[0]+dx,n[1]-dy],[n[0]+dx,n[1]+dy],[n[0]-dx,n[1]+dy],[n[0]-dx,n[1]-dy]]]}});
+    }
+  }
+  return { deck:{type:"FeatureCollection",features:feats}, pillars:{type:"FeatureCollection",features:pfeats} };
+}
+// ทิศการเดินรวม (ไว้หมุนแผนที่ให้ "เดินขึ้นบนจอ")
+function travelBearing(){ const a=START_PT, b=END_PT; const e=(b[0]-a[0])*M_LON, n=(b[1]-a[1])*M_LAT; return ((Math.atan2(e,n)*180/Math.PI)+360)%360; }
+const TBEAR=travelBearing();
+
+// ===== สร้าง GeoJSON เงา =====
+function buildShadows(per){
+  const feats=[];
+  if(!per) return {type:"FeatureCollection",features:feats};
+  for(const b of BUILDINGS){
+    const h=buildingHeight(b.tags).h, dx=per.dLon*h, dy=per.dLat*h;
+    const ring=b.ring, moved=ring.map(p=>[p[0]+dx,p[1]+dy]);
+    feats.push(poly(ring), poly(moved));
+    for(let i=0;i<ring.length-1;i++){
+      const a=ring[i],c=ring[i+1];
+      feats.push(poly([a,c,[c[0]+dx,c[1]+dy],[a[0]+dx,a[1]+dy],a]));
+    }
+  }
+  return {type:"FeatureCollection",features:feats};
+}
+function poly(r){ const ring=r[0].length? r:r; const closed=ring[0][0]===ring[ring.length-1][0]&&ring[0][1]===ring[ring.length-1][1]?ring:[...ring,ring[0]]; return {type:"Feature",geometry:{type:"Polygon",coordinates:[closed]},properties:{}}; }
+function buildingsGeo(){ return {type:"FeatureCollection",features:BUILDINGS.map(b=>{ const r=b.ring; const closed=r[0][0]===r[r.length-1][0]&&r[0][1]===r[r.length-1][1]?r:[...r,r[0]]; const bh=buildingHeight(b.tags); return {type:"Feature",geometry:{type:"Polygon",coordinates:[closed]},properties:{h:bh.h,conf:bh.conf}}; })}; }
+
+// ===== เช็คร่ม/แดด (เตรียม bbox เงาไว้ก่อน → เร็วพอสำหรับ routing ทั้งกราฟ) =====
+function shadowPrep(per){
+  if(!per) return null;
+  return BUILDINGS.map(b=>{
+    const h=buildingHeight(b.tags).h, dx=per.dLon*h, dy=per.dLat*h;
+    let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
+    for(const p of b.ring){ if(p[0]<minx)minx=p[0]; if(p[0]>maxx)maxx=p[0]; if(p[1]<miny)miny=p[1]; if(p[1]>maxy)maxy=p[1]; }
+    return {ring:b.ring,dx,dy, minx:Math.min(minx,minx+dx),maxx:Math.max(maxx,maxx+dx),
+            miny:Math.min(miny,miny+dy),maxy:Math.max(maxy,maxy+dy)};
+  });
+}
+// canopy = สิ่งปลูกสร้างที่บังแดดจาก "ด้านบน" (รางบีทีเอสยกระดับ) — ร่มเสมอ ไม่ขึ้นกับมุมดวงอาทิตย์
+// สำคัญมากแถวสยาม: skywalk เลียบพระราม 1 อยู่ใต้รางตลอดแนว
+let CANOPY=[];
+function underCanopy(x,y){
+  for(const c of CANOPY){
+    if(x<c.minx||x>c.maxx||y<c.miny||y>c.maxy) continue;
+    if(pip(x,y,c.ring)) return true;
+  }
+  return false;
+}
+function ptShaded(x,y,prep){
+  if(underCanopy(x,y)) return true;
+  for(const s of prep){
+    if(x<s.minx||x>s.maxx||y<s.miny||y>s.maxy) continue;
+    for(let t=0;t<=1.0001;t+=0.2){ if(pip(x-s.dx*t, y-s.dy*t, s.ring)) return true; }
+  }
+  return false;
+}
+// เส้นทางที่เลือก → geometry สำหรับวาด: ribbon 3D (กลางแจ้ง) + เส้นประ (ในอาคาร/ใต้หลังคา)
+function routeGeo(pts,prep,sunUp){
+  const empty={type:"FeatureCollection",features:[]};
+  if(!pts||pts.length<2) return {polys:empty,lines:empty,pct:null};
+  const samples=[];
+  for(let i=0;i<pts.length-1;i++){
+    const a=pts[i],b=pts[i+1], ind=b[2]?1:0, el=b[3]||0, cv=b[4]?1:0; // คุณสมบัติของช่วง เก็บที่จุดปลาย
+    const dist=Math.hypot((b[0]-a[0])*M_LON,(b[1]-a[1])*M_LAT), n=Math.max(1,Math.round(dist/10));
+    for(let k=0;k<n;k++){const tt=k/n; samples.push([a[0]+(b[0]-a[0])*tt, a[1]+(b[1]-a[1])*tt, ind, el, cv]);}
+  }
+  samples.push(pts[pts.length-1]);
+  let shaded=0; const polys=[], lines=[];
+  for(let i=0;i<samples.length-1;i++){
+    // ใช้ flag ของจุดต้น (a) — sample ถูกวางที่ "ต้นช่วงย่อย" คุณสมบัติของมันคือของช่วงนั้นพอดี
+    const a=samples[i], b=samples[i+1], mid=[(a[0]+b[0])/2,(a[1]+b[1])/2], ind=a[2]?1:0;
+    const sh=!sunUp || a[4]===1 || ptShaded(mid[0],mid[1],prep); if(sh)shaded++; // มีหลังคา (รวมในอาคาร) = ร่มเสมอ
+    const zb=(a[3]||0)+0.05, zt=zb+0.85;
+    if(!ind) polys.push({type:"Feature",properties:{sh:sh?1:0,b:zb,t:zt},geometry:{type:"Polygon",coordinates:[corridorPoly([a,b],2.6)]}});
+    lines.push({type:"Feature",properties:{sh:sh?1:0,in:ind},geometry:{type:"LineString",coordinates:[[a[0],a[1]],[b[0],b[1]]]}});
+  }
+  return { polys:{type:"FeatureCollection",features:polys}, lines:{type:"FeatureCollection",features:lines},
+           pct:Math.round(shaded/(samples.length-1)*100) };
+}
+// สถิติของเส้นทาง (ระยะ, นาที, %ร่ม ถ่วงตามระยะ)
+function routeStats(pts,prep,sunUp){
+  if(!pts||pts.length<2) return null;
+  let len=0, shadeLen=0;
+  for(let i=0;i<pts.length-1;i++){
+    const a=pts[i],b=pts[i+1], cv=b[4]?1:0;
+    const d=Math.hypot((b[0]-a[0])*M_LON,(b[1]-a[1])*M_LAT); len+=d;
+    const n=Math.max(1,Math.ceil(d/12));
+    for(let k=0;k<n;k++){ const t=(k+0.5)/n;
+      if(!sunUp||cv===1||ptShaded(a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,prep)) shadeLen+=d/n; }
+  }
+  return {len:Math.round(len), min:Math.round(len/75), shade:Math.round(shadeLen/len*100)};
+}
+
+// ===== MapLibre 3D =====
+const map=new maplibregl.Map({
+  container:"map", center:CENTER, zoom:16.6, pitch:45, bearing:TBEAR, maxPitch:75, antialias:true,
+  style:{ version:8, glyphs:"https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+    sources:{ carto:{ type:"raster", tiles:["https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png","https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"], tileSize:256, attribution:"© OpenStreetMap, © CARTO" } },
+    layers:[ {id:"bg",type:"background",paint:{"background-color":"#0b0f14"}}, {id:"carto",type:"raster",source:"carto",paint:{"raster-opacity":0.55}} ]
+  }
+});
+map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),"bottom-right");
+
+map.on("load",()=>{
+  map.addSource("shadows",{type:"geojson",data:buildShadows(null)});
+  map.addLayer({id:"shadows",type:"fill",source:"shadows",paint:{"fill-color":"#16335e","fill-opacity":0.32}});
+
+  map.addSource("buildings",{type:"geojson",data:buildingsGeo()});
+  map.addLayer({id:"buildings",type:"fill-extrusion",source:"buildings",paint:{
+    // ปกติ = เทากลางสีเดียว ไม่แย่งสายตา — สี confidence (ข้อมูล debug) สลับดูได้ด้วยปุ่ม 🔧
+    "fill-extrusion-color":"#57616b",
+    "fill-extrusion-height":["get","h"], "fill-extrusion-base":0,
+    "fill-extrusion-opacity":0.72, "fill-extrusion-vertical-gradient":true }});
+
+  // โครงสร้าง Skywalk = deck 3D ลอย 5-6 ม. + เสา — สร้างจากช่วงยกระดับใน OSM (เติมข้อมูลตอน buildNet)
+  map.addSource("skystruct",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+  map.addSource("skypillars",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+  map.addLayer({id:"skypillar",type:"fill-extrusion",source:"skypillars",paint:{
+    "fill-extrusion-color":"#5a6570",
+    "fill-extrusion-base":0,"fill-extrusion-height":DECK_BASE,"fill-extrusion-opacity":0.85}});
+  map.addLayer({id:"skydeck",type:"fill-extrusion",source:"skystruct",paint:{
+    "fill-extrusion-color":"#8494a3","fill-extrusion-base":DECK_BASE,"fill-extrusion-height":DECK_TOP,
+    "fill-extrusion-opacity":0.55}});
+
+  // แผ่นรางบีทีเอสลอยที่ ~12 ม. — ให้คนเห็นว่าทำไมใต้รางถึงร่ม (โหลดแนวรางจริงมาพร้อมโครงข่าย)
+  map.addSource("canopy",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+  map.addLayer({id:"canopy",type:"fill-extrusion",source:"canopy",paint:{
+    "fill-extrusion-color":"#3d4750","fill-extrusion-base":["get","b"],"fill-extrusion-height":["get","t"],
+    "fill-extrusion-opacity":0.45}});
+
+  // โครงข่ายทั้งหมด (โหมด 🔧): edge ระบายตามแดด — เขียว=ร่ม เหลือง=แดด ฟ้า=ใต้หลังคา · หนา=ยกระดับ
+  map.addSource("netdebug",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+  map.addLayer({id:"netdebug",type:"line",source:"netdebug",
+    layout:{visibility:"none","line-cap":"round"},
+    paint:{"line-color":["case",["==",["get","cov"],1],"#5aa7ff",
+             ["interpolate",["linear"],["get","sun"],0,"#3ddc84",1,"#ffcf4a"]],
+           "line-width":["case",["==",["get","el"],1],3,1.2],
+           "line-opacity":0.65}});
+
+  // เส้นทางรอง (อีกทางเลือกที่ไม่ได้เลือกอยู่) = เส้นเทาโปร่ง เห็นเปรียบเทียบได้แต่ไม่แย่งสายตา
+  map.addSource("altroute",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+  map.addLayer({id:"route-alt",type:"line",source:"altroute",
+    layout:{"line-cap":"round","line-join":"round"},
+    paint:{"line-color":"#9fb0bf","line-width":3,"line-opacity":0.5}});
+
+  // เส้นทางที่เลือก: ribbon 3D วางบนพื้น deck (สูงตามระดับที่เดินจริง) — เขียว/เหลืองตามร่ม/แดด
+  map.addSource("routesegs",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+  map.addSource("routeline",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+  map.addLayer({id:"route-shade",type:"fill-extrusion",source:"routesegs",paint:{
+    "fill-extrusion-color":["match",["get","sh"],1,"#3ddc84","#ffcf4a"],
+    "fill-extrusion-base":["get","b"],"fill-extrusion-height":["get","t"],
+    "fill-extrusion-opacity":0.95}});
+  // เส้นบางโปร่งทับทุกชั้น → ตามรอยเส้นทางได้ต่อเนื่อง (เฉพาะช่วงกลางแจ้ง เสริม ribbon)
+  map.addLayer({id:"route-guide",type:"line",source:"routeline",filter:["==",["get","in"],0],
+    layout:{"line-cap":"round","line-join":"round"},
+    paint:{"line-color":["match",["get","sh"],1,"#3ddc84","#ffcf4a"],"line-width":2,"line-opacity":0.45}});
+  // ช่วงเดินในอาคาร = เส้นประชัดๆ (ไม่มี deck/ribbon) → อ่านออกทันทีว่า "ทะลุห้าง" ไม่ใช่ skywalk ขาด
+  map.addLayer({id:"route-indoor",type:"line",source:"routeline",filter:["==",["get","in"],1],
+    layout:{"line-join":"round"},
+    paint:{"line-color":["match",["get","sh"],1,"#3ddc84","#ffcf4a"],"line-width":3.5,
+           "line-opacity":0.9,"line-dasharray":[1.4,1.6]}});
+
+  // หมุดปลายทาง (ตรึงที่ Centerpoint / MBK)
+  new maplibregl.Marker({color:"#3ddc84"}).setLngLat(START_PT).setPopup(new maplibregl.Popup().setText("MBK Center")).addTo(map);
+  new maplibregl.Marker({color:"#ff6b6b"}).setLngLat(END_PT).setPopup(new maplibregl.Popup().setText("BTS สยาม (Siam)")).addTo(map);
+
+  // กดที่ deck → popup บอกว่าเป็นทางยกระดับ (ข้อมูลจาก OSM)
+  map.on("click","skydeck",(e)=>{
+    new maplibregl.Popup({closeButton:false}).setLngLat(e.lngLat)
+      .setHTML(`<b>ทางเดินยกระดับ (skywalk)</b><br>ตำแหน่งจากข้อมูล OSM`).addTo(map);
+  });
+  map.on("mouseenter","skydeck",()=>map.getCanvas().style.cursor="pointer");
+  map.on("mouseleave","skydeck",()=>map.getCanvas().style.cursor="");
+
+  render();
+  fitRoute();
+  // ถ้ามีไฟล์ความสูงจริง (walkbkk_heights_2023.js) → ใช้เลย ไม่ต้องดึง OSM มาเดา
+  if(!(window.WALKBKK_HEIGHTS && applyHeightGeoJSON(window.WALKBKK_HEIGHTS,"ฝังในเดโม"))) loadOSM();
+  // โหลดโครงข่ายทางเท้า OSM → คำนวณ 2 เส้นทาง (ร่มสุด/เร็วสุด) จากสมการจริง
+  loadNet().then(ok=>{
+    if(ok){ reroute(); fitRoute(); }
+    else document.getElementById("status").textContent="โหลดโครงข่ายทางเท้าไม่ได้ (เครือข่าย/CORS) — กด ↻ คำนวณเส้นทางใหม่ เพื่อลองอีกครั้ง";
+  });
+});
+
+function fitRoute(){
+  const pts=(ROUTE&&ROUTE.length>1)?ROUTE:[START_PT,END_PT];
+  let minx=180,miny=90,maxx=-180,maxy=-90;
+  for(const [x,y] of pts){ if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y; }
+  map.fitBounds([[minx,miny],[maxx,maxy]],
+    {padding:{top:90,bottom:70,left:360,right:60}, bearing:TBEAR, pitch:curPitch, duration:900});
+}
+
+// ===== โครงข่ายทางเท้าจริงจาก OSM → กราฟ → Dijkstra 2 แบบ =====
+// สมการ WalkBKK: cost(edge) = ระยะ × (1 + β × สัดส่วนที่โดนแดด ณ เวลานั้น)
+// β=0 คือทางเร็วสุด · β>0 ยอมอ้อมเพื่อแลกร่ม (ทางในอาคาร/ใต้หลังคา = ร่ม 100%)
+const BETA=2.5;
+// สมมติฐานทีม WalkBKK: "skywalk" (โครงยกระดับยาวต่อเนื่อง) มีหลังคาแน่ → ร่มเสมอ
+// แต่ "สะพานลอยข้ามถนน" (ชิ้นยกระดับสั้นๆ โดดๆ) หลายที่ไม่มีหลังคา → คิดตามเงาจริง
+// แยกสองอย่างนี้จากความยาวรวมของโครงยกระดับที่เชื่อมถึงกัน (คำนวณใน buildNet)
+const ROOF_SKYWALK=true;
+const SKYWALK_MIN_LEN=150; // เมตร — โครงยกระดับต่อเนื่องยาวเกินนี้ = skywalk มีหลังคา · สั้นกว่า = สะพานลอย
+const NET_BBOX="13.7408,100.5255,13.7500,100.5385"; // กว้างกว่า bbox ตึกเล็กน้อย ให้ route มีทางอ้อม
+let NET=null; // {nodes:[[lon,lat]], adj:[ [{j,len,covered,elev,ind,sun}] ]}
+let NET_LOADING=false, NET_PACK=null; // NET_PACK = ข้อมูลกะทัดรัด ไว้ทำ cache/บันทึกไฟล์
+const NET_CACHE_KEY="walkbkk_net_v6", NET_CACHE_MS=14*24*3600*1000; // v6: แยก skywalk (โครงยาว มีหลังคา) จากสะพานลอย (สั้น เปลือย)
+
+// ประกอบกราฟจาก pack {nodes,edges:[[ia,ib,len,cov,elev]],canopy} — เร็วมาก ไม่ใช้เน็ต
+function buildNet(pack,label){
+  const nodes=pack.nodes, adj=nodes.map(()=>[]);
+  for(const [ia,ib,len,cov,elv,stp,ind] of pack.edges){
+    adj[ia].push({j:ib,len,covered:!!cov,elev:elv,ind:ind||0,stp:stp||0,sun:0});
+    adj[ib].push({j:ia,len,covered:!!cov,elev:elv,ind:ind||0,stp:stp||0,sun:0});
+  }
+  // จำแนกทางยกระดับ: จับกลุ่มช่วงยกระดับที่เชื่อมถึงกัน วัดความยาวรวม
+  // ยาว ≥ SKYWALK_MIN_LEN = skywalk (มีหลังคา → ร่มเสมอ) · สั้นกว่า = สะพานลอยเปลือย (คิดตามเงาจริง)
+  let nSky=0, nBridge=0;
+  if(ROOF_SKYWALK){
+    const ec=new Int32Array(nodes.length).fill(-1); let ncc=0;
+    for(let s=0;s<nodes.length;s++){
+      if(ec[s]!==-1||!adj[s].some(e=>e.elev>0)) continue;
+      const stack=[s]; ec[s]=ncc;
+      while(stack.length){ const u=stack.pop();
+        for(const e of adj[u]) if(e.elev>0&&ec[e.j]===-1){ ec[e.j]=ncc; stack.push(e.j); } }
+      ncc++;
+    }
+    const clen=new Float64Array(ncc);
+    for(let u=0;u<nodes.length;u++) for(const e of adj[u]) if(e.elev>0&&e.j>u) clen[ec[u]]+=e.len;
+    for(let u=0;u<nodes.length;u++) for(const e of adj[u]) if(e.elev>0){
+      if(clen[ec[u]]>=SKYWALK_MIN_LEN){ e.covered=true; if(e.j>u)nSky++; }
+      else if(e.j>u)nBridge++;
+    }
+  }
+  // หา connected component ใหญ่สุด — snap ต้นทาง/ปลายทางเฉพาะโครงหลักที่เชื่อมถึงกัน
+  const comp=new Int32Array(nodes.length).fill(-1);
+  let nc=0, mainC=-1, mainN=0;
+  for(let s=0;s<nodes.length;s++){
+    if(comp[s]!==-1) continue;
+    let cnt=0; const stack=[s]; comp[s]=nc;
+    while(stack.length){ const u=stack.pop(); cnt++;
+      for(const e of adj[u]) if(comp[e.j]===-1){ comp[e.j]=nc; stack.push(e.j); } }
+    if(cnt>mainN){ mainN=cnt; mainC=nc; } nc++;
+  }
+  NET={nodes,adj,comp,main:mainC}; NET_PACK=pack;
+  // canopy: way ปิด (หลังคา skywalk/สถานี) ใช้รูปทรงตรงๆ · way เปิด (ราง) ขยายเป็นแถบ 12 ม.
+  CANOPY=(pack.canopy||[]).map(l=>{
+    const closed=l.length>3&&l[0][0]===l[l.length-1][0]&&l[0][1]===l[l.length-1][1];
+    const ring=closed?l:corridorPoly(l,12);
+    const zb=closed?8.2:11, zt=closed?9:12.4; // หลังคา/สถานีเตี้ยกว่าราง
+    let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9;
+    for(const p of ring){ if(p[0]<minx)minx=p[0]; if(p[0]>maxx)maxx=p[0]; if(p[1]<miny)miny=p[1]; if(p[1]>maxy)maxy=p[1]; }
+    return {ring,minx,miny,maxx,maxy,zb,zt};
+  });
+  if(map.getSource("canopy")) map.getSource("canopy").setData({type:"FeatureCollection",
+    features:CANOPY.map(c=>({type:"Feature",properties:{b:c.zb,t:c.zt},geometry:{type:"Polygon",coordinates:[c.ring]}}))});
+  // พื้น deck + เสา จากช่วงยกระดับจริงใน OSM
+  const dg=deckGeoFromNet(pack);
+  if(map.getSource("skystruct")) map.getSource("skystruct").setData(dg.deck);
+  if(map.getSource("skypillars")) map.getSource("skypillars").setData(dg.pillars);
+  document.getElementById("status").textContent=
+    `โครงข่าย: ${nodes.length} จุด · ${pack.edges.length} ช่วง · โครงหลัก ${mainN} จุด — ${label}`;
+  // สุขภาพข้อมูล — โชว์ค้างไว้: ถ้าค่าไหนเป็น 0 ผิดคาด แปลว่าข้อมูล OSM ขาด อย่าไปโทษ algorithm
+  let nCov=0; for(const [,,len,cov] of pack.edges){ if(cov)nCov++; }
+  document.getElementById("netinfo").textContent=
+    `ข้อมูล: skywalk(มีหลังคา) ${nSky} ช่วง · สะพานลอยเปลือย ${nBridge} ช่วง · ในอาคาร/covered ${nCov} ช่วง · canopy ${CANOPY.length} ชิ้น`;
+}
+
+async function loadNet(){
+  if(NET_LOADING) return false;
+  const st=document.getElementById("status");
+  // 1) ไฟล์ฝัง walkbkk_net_2026.js (กดปุ่ม 💾 สร้างได้) → เปิดปุ๊บติดปั๊บ ออฟไลน์ได้
+  if(window.WALKBKK_NET&&window.WALKBKK_NET.edges){ buildNet(window.WALKBKK_NET,"ไฟล์ฝัง (ออฟไลน์)"); return true; }
+  // 2) cache ในเบราว์เซอร์ — โหลดจากเน็ตแค่ครั้งแรกครั้งเดียว
+  try{
+    const c=JSON.parse(localStorage.getItem(NET_CACHE_KEY)||"null");
+    if(c&&c.ts&&(Date.now()-c.ts)<NET_CACHE_MS&&c.edges){
+      buildNet(c,`cache อายุ ${Math.max(1,Math.round((Date.now()-c.ts)/86400000))} วัน`); return true; }
+  }catch(e){}
+  // 3) ยิง Overpass ทุก mirror พร้อมกัน เอาตัวที่ตอบเร็วสุด (ไม่ต้องรอ timeout ทีละตัว)
+  NET_LOADING=true;
+  st.textContent=`กำลังโหลดโครงข่ายทางเท้า (ยิง ${MIRRORS.length} เซิร์ฟเวอร์พร้อมกัน)…`;
+  // canopy 3 ชนิด: ราง BTS (เส้น) + หลังคา skywalk (building=roof) + ตัวสถานีที่คร่อมถนน (train_station)
+  // ราง: ไม่กรอง bridge=yes — BTS บางช่วง tag แค่ railway=light_rail (+layer) ในย่านนี้รางทุกเส้นยกระดับอยู่แล้ว
+  const q=`[out:json][timeout:25];(way["highway"~"^(footway|pedestrian|path|steps|corridor|living_street|service|residential|unclassified)$"]["access"!~"private|no"](${NET_BBOX});way["railway"~"^(rail|light_rail|monorail|subway)$"](${NET_BBOX});way["building"~"^(roof|train_station)$"](${NET_BBOX}););out body geom;`;
+  let j=null;
+  const ctrls=MIRRORS.map(()=>new AbortController());
+  try{
+    j=await Promise.any(MIRRORS.map(async(url,i)=>{
+      const t=setTimeout(()=>ctrls[i].abort(),25000);
+      try{
+        const res=await fetch(url,{method:"POST",body:"data="+encodeURIComponent(q),signal:ctrls[i].signal});
+        if(!res.ok) throw new Error("http "+res.status);
+        const jj=await res.json();
+        if(!jj.elements||jj.elements.length<50) throw new Error("empty");
+        return jj;
+      }finally{ clearTimeout(t); }
+    }));
+    for(const c of ctrls){ try{c.abort();}catch(e){} } // ตัวที่ช้ากว่า ยกเลิกทิ้ง
+  }catch(e){ j=null; }
+  NET_LOADING=false;
+  if(!j){ st.textContent="โหลดโครงข่ายไม่สำเร็จ (เครือข่าย/rate-limit) — กด ↻ คำนวณเส้นทางใหม่ เพื่อลองอีกครั้ง"; return false; }
+  // แปลงเป็น pack กะทัดรัด → สร้างกราฟ → เก็บ cache
+  const idx=new Map(), nodes=[], packEdges=[], canopy=[];
+  const nid=(lon,lat)=>{ const k=lon.toFixed(7)+","+lat.toFixed(7); let i=idx.get(k);
+    if(i===undefined){ i=nodes.length; nodes.push([+lon.toFixed(7),+lat.toFixed(7)]); idx.set(k,i); } return i; };
+  for(const el of j.elements){
+    if(el.type!=="way"||!el.geometry) continue;
+    const tg=el.tags||{};
+    if(tg.railway){ canopy.push(el.geometry.map(g=>[g.lon,g.lat])); continue; } // รางยกระดับ = หลังคา (เส้น → ขยายเป็นแถบ)
+    if(tg.building){ if(el.geometry.length>3) canopy.push(el.geometry.map(g=>[g.lon,g.lat])); continue; } // หลังคา/สถานี = polygon ปิด ใช้รูปทรงตรงๆ
+    const ind=(tg.tunnel==="building_passage"||tg.indoor==="yes"||tg.highway==="corridor")?1:0; // เดินในอาคาร → เส้นประ
+    const elv=(tg.bridge==="yes"||(parseInt(tg.layer)||0)>0)?DECK_TOP:0;
+    const cov=(ind||tg.covered==="yes")?1:0; // หลังคาจาก tag ตรงๆ — ส่วน skywalk ตัดสินใน buildNet จากความยาวโครง
+    const stp=tg.highway==="steps"?1:0; // บันได — แพงกว่าทางราบ คนจะได้ไม่เด้งขึ้นๆ ลงๆ ฟรี
+    for(let i2=0;i2<el.geometry.length-1;i2++){
+      const a=el.geometry[i2], b=el.geometry[i2+1];
+      const len=Math.hypot((b.lon-a.lon)*M_LON,(b.lat-a.lat)*M_LAT);
+      if(!(len>0)) continue;
+      packEdges.push([nid(a.lon,a.lat), nid(b.lon,b.lat), Math.round(len*10)/10, cov, elv, stp, ind]);
+    }
+  }
+  if(nodes.length<=50){ st.textContent="ข้อมูลโครงข่ายน้อยผิดปกติ — กด ↻ ลองใหม่"; return false; }
+  const pack={v:1,ts:Date.now(),nodes,edges:packEdges,canopy};
+  buildNet(pack,"OSM สด (cache ไว้แล้ว)");
+  try{ localStorage.setItem(NET_CACHE_KEY,JSON.stringify(pack)); }catch(e){} // quota เต็ม/file:// บางเจ้า → ข้าม
+  return true;
+}
+// ปุ่ม 💾: บันทึกโครงข่ายเป็นไฟล์ walkbkk_net_2026.js — วางข้างไฟล์ html นี้ แล้วเดโมออฟไลน์ได้
+function saveNetFile(){
+  if(!NET_PACK){ document.getElementById("status").textContent="ยังไม่มีโครงข่ายให้บันทึก"; return; }
+  const blob=new Blob(["window.WALKBKK_NET="+JSON.stringify(NET_PACK)+";"],{type:"text/javascript"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="walkbkk_net_2026.js"; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  document.getElementById("status").textContent="บันทึก walkbkk_net_2026.js แล้ว — วางไว้โฟลเดอร์เดียวกับไฟล์นี้ ครั้งหน้าโหลดทันทีไม่ใช้เน็ต";
+}
+function nearestNode(p){
+  let best=-1,bd=1e18;
+  for(let i=0;i<NET.nodes.length;i++){
+    if(NET.comp[i]!==NET.main) continue; // snap เฉพาะโครงข่ายหลักที่เชื่อมถึงกันแน่ๆ
+    const n=NET.nodes[i];
+    const d=Math.hypot((n[0]-p[0])*M_LON,(n[1]-p[1])*M_LAT); if(d<bd){bd=d;best=i;} }
+  return best;
+}
+// อัปเดตสัดส่วนโดนแดดของทุก edge ตามตำแหน่งดวงอาทิตย์ปัจจุบัน
+function computeEdgeSun(prep){
+  for(let u=0;u<NET.adj.length;u++) for(const e of NET.adj[u]){
+    if(e.covered||!prep){ e.sun=0; continue; }
+    const a=NET.nodes[u], b=NET.nodes[e.j];
+    const n=Math.max(1,Math.ceil(e.len/15)); let sun=0;
+    for(let k=0;k<n;k++){ const t=(k+0.5)/n;
+      if(!ptShaded(a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, prep)) sun++; }
+    e.sun=sun/n;
+  }
+}
+function dijkstra(src,dst,wfn){
+  const N=NET.nodes.length;
+  const dist=new Float64Array(N).fill(Infinity), prevN=new Int32Array(N).fill(-1), prevE=new Array(N).fill(null);
+  const h=[[0,src]]; dist[src]=0;
+  const push=(v)=>{ h.push(v); let i=h.length-1;
+    while(i>0){ const p=(i-1)>>1; if(h[p][0]<=h[i][0])break; [h[p],h[i]]=[h[i],h[p]]; i=p; } };
+  const pop=()=>{ const top=h[0], last=h.pop();
+    if(h.length){ h[0]=last; let i=0; for(;;){ let l=2*i+1,r=l+1,m=i;
+      if(l<h.length&&h[l][0]<h[m][0])m=l; if(r<h.length&&h[r][0]<h[m][0])m=r;
+      if(m===i)break; [h[m],h[i]]=[h[i],h[m]]; i=m; } } return top; };
+  while(h.length){
+    const [d,u]=pop(); if(u===dst)break; if(d>dist[u])continue;
+    for(const e of NET.adj[u]){ const nd=d+wfn(e);
+      if(nd<dist[e.j]){ dist[e.j]=nd; prevN[e.j]=u; prevE[e.j]=e; push([nd,e.j]); } }
+  }
+  if(dst!==src&&prevN[dst]===-1) return null;
+  const pts=[]; let v=dst;
+  while(v!==-1){ const e=prevE[v], n=NET.nodes[v];
+    pts.push([n[0],n[1], e?e.ind:0, e?e.elev:0, e?(e.covered?1:0):0]); v=prevN[v]; }
+  return pts.reverse();
+}
+// คำนวณ 2 เส้นทางใหม่ตามเวลาปัจจุบัน (เส้นร่มสุดเปลี่ยนตามดวงอาทิตย์!)
+function reroute(){
+  const st=document.getElementById("status");
+  if(NET_LOADING){ st.textContent="กำลังโหลดโครงข่ายอยู่ รอสักครู่…"; return; }
+  if(!NET){ loadNet().then(ok=>ok&&reroute()); return; }
+  const ds=document.getElementById("date").value, hr=parseFloat(document.getElementById("hour").value);
+  const per=shadowPerM(sunPosition(bkkDate(ds,hr), CENTER[1], CENTER[0]));
+  const prep=shadowPrep(per);
+  const t0=performance.now();
+  computeEdgeSun(prep);
+  const src=nearestNode(START_PT), dst=nearestNode(END_PT);
+  // บันไดคิดแพง ×2.5 (ทั้งสองโหมด — คนเดินจริงบันไดช้าและเหนื่อย) → ไม่ขึ้นๆ ลงๆ โดยไม่จำเป็น
+  const stepCost=e=>e.len*(e.stp?2.5:1);
+  ROUTES.fast=dijkstra(src,dst,e=>stepCost(e));
+  ROUTES.cool=dijkstra(src,dst,e=>stepCost(e)*(1+BETA*e.sun));
+  if(!ROUTES.fast){ st.textContent="หาเส้นทางในโครงข่ายไม่ได้ (จุดต้นทาง/ปลายทางไม่เชื่อมกัน)"; return; }
+  st.textContent=`คำนวณ 2 เส้นทางจากโครงข่าย OSM ${Math.round(performance.now()-t0)} ms · สมการ: ระยะ×บันได×(1+${BETA}×แดด)`;
+  if(DEBUG&&map.getSource("netdebug")) map.getSource("netdebug").setData(netDebugGeo());
+  applySelection();
+}
+// มุมมอง debug ของโครงข่าย: ทุก edge ระบายตามแดด (เขียว=ร่ม เหลือง=แดด ฟ้า=ใต้หลังคา) เส้นหนา=ยกระดับ
+// ไว้ตอบคำถาม "ทำไม router ไม่เลือกทาง X" — เห็นเลยว่า OSM มีทางนั้นไหม และมันร่มจริงหรือเปล่า
+function netDebugGeo(){
+  const feats=[];
+  if(!NET) return {type:"FeatureCollection",features:feats};
+  for(let u=0;u<NET.adj.length;u++) for(const e of NET.adj[u]){
+    if(e.j<=u) continue; // edge ละ 1 เส้นพอ
+    feats.push({type:"Feature",
+      properties:{sun:+e.sun.toFixed(2), cov:e.covered?1:0, el:e.elev?1:0},
+      geometry:{type:"LineString",coordinates:[NET.nodes[u],NET.nodes[e.j]]}});
+  }
+  return {type:"FeatureCollection",features:feats};
+}
+// หมุด 🔼/🔽 ตรงจุดที่เส้นทางเปลี่ยนระดับ (พื้น↔skywalk) — หาอัตโนมัติจาก elev ของแต่ละช่วง
+let LVL_MARKERS=[];
+function updateLevelMarkers(){
+  for(const m of LVL_MARKERS) m.remove();
+  LVL_MARKERS=[];
+  if(!ROUTE||ROUTE.length<3) return;
+  for(let k=1;k<ROUTE.length-1;k++){
+    const before=(ROUTE[k][3]||0)>0, after=(ROUTE[k+1][3]||0)>0; // elev ของช่วงก่อนหน้า/ถัดไป
+    if(before===after) continue;
+    const el=document.createElement("div"); el.className="lvl";
+    el.textContent=after?"🔼":"🔽"; el.title=after?"ขึ้น skywalk":"ลงระดับถนน";
+    LVL_MARKERS.push(new maplibregl.Marker({element:el,anchor:"center"})
+      .setLngLat([ROUTE[k][0],ROUTE[k][1]]).addTo(map));
+  }
+}
+function applySelection(){
+  ROUTE=ROUTES[SELECTED]||ROUTES.fast;
+  const other=ROUTES[SELECTED==="cool"?"fast":"cool"];
+  if(map.getSource("altroute")) map.getSource("altroute").setData(other?{type:"Feature",geometry:{type:"LineString",coordinates:other.map(p=>[p[0],p[1]])},properties:{}}:{type:"FeatureCollection",features:[]});
+  document.getElementById("card-cool").classList.toggle("sel",SELECTED==="cool");
+  document.getElementById("card-fast").classList.toggle("sel",SELECTED==="fast");
+  updateLevelMarkers();
+  render();
+}
+
+function render(){
+  const ds=document.getElementById("date").value, hr=parseFloat(document.getElementById("hour").value);
+  const sun=sunPosition(bkkDate(ds,hr), CENTER[1], CENTER[0]);
+  const per=shadowPerM(sun);
+  document.getElementById("hourVal").textContent=fmtHour(hr);
+  document.getElementById("elev").textContent=sun.elevation.toFixed(0)+"°";
+  document.getElementById("azi").textContent=compass(sun.azimuth);
+  document.getElementById("bcount").textContent=BUILDINGS.length;
+  // สรุปความเชื่อมั่นความสูง
+  let sa=0,hi=0,me=0,lo=0; for(const b of BUILDINGS){ const c=buildingHeight(b.tags).conf; if(c==="sat")sa++; else if(c==="high")hi++; else if(c==="med")me++; else lo++; }
+  const n=BUILDINGS.length||1, pc=x=>Math.round(x/n*100);
+  document.getElementById("conf").innerHTML=`ความสูงตึก: `+
+    (sa?`<b style="color:#3fd0bd">วัดจริง ${sa} (${pc(sa)}%)</b> · `:``)+
+    `<b style="color:#9fb4c8">OSM ${hi} (${pc(hi)}%)</b> · เดาชนิด ${me} (${pc(me)}%) · <span style="color:#c98a4f">default ${lo} (${pc(lo)}%)</span>`;
+
+  if(map.getSource("shadows")) map.getSource("shadows").setData(buildShadows(per));
+  // ปรับแสง 3D ให้ด้านตึกสว่าง/มืดตามดวงอาทิตย์
+  if(per) map.setLight({anchor:"map",color:"#fff7e6",intensity:0.45,position:[1.4,sun.azimuth,Math.max(2,90-sun.elevation)]});
+  else    map.setLight({anchor:"map",color:"#9fb0c8",intensity:0.2,position:[1.4,0,80]});
+
+  const prep=shadowPrep(per);
+  const r=routeGeo(ROUTE,prep,!!per);
+  if(map.getSource("routesegs")) map.getSource("routesegs").setData(r.polys);
+  if(map.getSource("routeline")) map.getSource("routeline").setData(r.lines);
+  document.getElementById("shade").textContent=r.pct==null?"–":r.pct+"%";
+  // อัปเดตการ์ดเปรียบเทียบ 2 เส้นทาง — ให้เห็นชัดว่ายอมเดินเพิ่มกี่เมตร แลกร่มกี่ %
+  for(const key of ["cool","fast"]){
+    const s=routeStats(ROUTES[key],prep,!!per);
+    document.getElementById(key+"-stats").innerHTML=s?
+      `${s.len} ม. · ${s.min} นาที<br>ร่ม <b style="color:${s.shade>=60?"#3ddc84":"#ffcf4a"}">${s.shade}%</b>`:"–";
+  }
+}
+
+// ===== โหลดตึกจริงจาก OSM (ฝั่งเบราว์เซอร์) =====
+const BBOX="13.7420,100.5275,13.7478,100.5360"; // S,W,N,E
+const MIRRORS=["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter","https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
+async function loadOSM(){
+  const st=document.getElementById("status"); st.textContent="กำลังโหลดตึกจริงจาก OSM…";
+  const q=`[out:json][timeout:40];(way["building"](${BBOX}););out body geom;`;
+  for(const url of MIRRORS){
+    try{
+      const c=new AbortController(); const t=setTimeout(()=>c.abort(),40000);
+      const res=await fetch(url,{method:"POST",body:"data="+encodeURIComponent(q),signal:c.signal});
+      clearTimeout(t); if(!res.ok) continue;
+      const j=await res.json(); const out=[];
+      for(const el of (j.elements||[])) if(el.type==="way"&&el.geometry&&el.geometry.length>=4)
+        out.push({ ring:el.geometry.map(g=>[g.lon,g.lat]), tags:el.tags||{} });
+      if(out.length){ BUILDINGS=out;
+        const lv=out.filter(b=>b.tags["building:levels"]).length, hh=out.filter(b=>b.tags.height).length;
+        st.textContent=`โหลด ${out.length} ตึก · มี levels ${lv} (${Math.round(lv/out.length*100)}%) · มี height ${hh}`;
+        if(map.getSource("buildings")) map.getSource("buildings").setData(buildingsGeo());
+        render(); scheduleReroute(); return;
+      }
+    }catch(e){}
+  }
+  st.textContent="โหลด OSM ไม่ได้ (เครือข่าย/CORS) — ใช้ตึกตัวอย่างแทน";
+}
+
+// ===== UI =====
+function fmtHour(h){const hh=Math.floor(h),mm=Math.round((h-hh)*60);return String(hh).padStart(2,"0")+":"+String(mm).padStart(2,"0");}
+function compass(az){const d=["เหนือ","NE","ตอ.","SE","ใต้","SW","ตต.","NW"];return Math.round(az)+"° "+d[Math.round(az/45)%8];}
+function season(s){const m=Number(s.split("-")[1]);return ({12:"หนาว",1:"หนาว",2:"หนาว",3:"ร้อน",4:"ร้อน",5:"ร้อน",6:"ฝน",7:"ฝน",8:"ฝน",9:"ฝน",10:"ปลายฝน",11:"ปลายฝน"})[m]||"";}
+const dEl=document.getElementById("date"); dEl.value=new Date().toISOString().slice(0,10);
+document.getElementById("seasonVal").textContent=season(dEl.value);
+// เลื่อนเวลา → อัปเดตสีทันที + คำนวณเส้นทางใหม่หลังหยุดเลื่อน (เส้นร่มสุดขยับตามดวงอาทิตย์)
+let rerouteTimer=null;
+function scheduleReroute(){ if(!NET)return; clearTimeout(rerouteTimer); rerouteTimer=setTimeout(reroute,350); }
+document.getElementById("hour").addEventListener("input",()=>{render();scheduleReroute();});
+dEl.addEventListener("change",()=>{document.getElementById("seasonVal").textContent=season(dEl.value);render();scheduleReroute();});
+document.getElementById("reload").addEventListener("click",loadOSM);
+document.getElementById("route").addEventListener("click",fitRoute);
+document.getElementById("reroute").addEventListener("click",reroute);
+document.getElementById("saveNet").addEventListener("click",saveNetFile);
+function pickRoute(key){
+  SELECTED=key;
+  // ยังไม่มีเส้นทางให้เลือก (โครงข่ายกำลังโหลด/โหลดไม่สำเร็จ) → บอกผู้ใช้ ไม่เงียบ
+  if(!ROUTES.cool&&!ROUTES.fast){
+    document.getElementById("status").textContent=
+      NET_LOADING?"โครงข่ายทางเท้ากำลังโหลด — เส้นทางจะขึ้นเองเมื่อเสร็จ":"ยังไม่มีเส้นทาง — กด ↻ คำนวณเส้นทางใหม่";
+    if(!NET_LOADING&&!NET) reroute(); // ลองโหลดใหม่ให้เลย
+    return;
+  }
+  applySelection(); // มีเส้นทางแล้ว → สลับได้ทันที (สถิติการ์ดคงเดิม ไม่ต้องคำนวณใหม่)
+}
+document.getElementById("card-cool").addEventListener("click",()=>pickRoute("cool"));
+document.getElementById("card-fast").addEventListener("click",()=>pickRoute("fast"));
+
+// โหมด debug: สลับสีตึกเป็นสี confidence ความสูง (ข้อมูล dev — ไม่โชว์ผู้ใช้ทั่วไป)
+const CONF_COLORS=["match",["get","conf"],"sat","#2bb6a3","high","#6f8499","med","#8a8170","#b07b43"];
+let DEBUG=false;
+document.getElementById("debug").addEventListener("click",(e)=>{
+  DEBUG=!DEBUG;
+  if(map.getLayer("buildings")) map.setPaintProperty("buildings","fill-extrusion-color",DEBUG?CONF_COLORS:"#57616b");
+  if(map.getLayer("netdebug")){
+    map.setLayoutProperty("netdebug","visibility",DEBUG?"visible":"none");
+    if(DEBUG) map.getSource("netdebug").setData(netDebugGeo()); // อัปเดตสีตามดวงอาทิตย์ล่าสุด
+  }
+  document.getElementById("conf").style.display=DEBUG?"":"none";
+  document.getElementById("legendDebug").style.display=DEBUG?"":"none";
+  e.target.style.background=DEBUG?"var(--accent)":""; e.target.style.color=DEBUG?"#1a1300":"";
+});
+
+// แปลง GeoJSON ความสูง → อาคาร (tier "วัดจริง") · ใช้ทั้งโหลดอัตโนมัติและเลือกไฟล์เอง
+function applyHeightGeoJSON(gj,label){
+  const out=[];
+  for(const ft of (gj.features||[])){
+    const g=ft.geometry; if(!g) continue;
+    let ring=null;
+    if(g.type==="Polygon") ring=g.coordinates[0];
+    else if(g.type==="MultiPolygon") ring=g.coordinates[0][0];
+    if(!ring||ring.length<4) continue;
+    const p=ft.properties||{}, h=p.height!=null?p.height:p.building_height;
+    if(!(parseFloat(h)>0)) continue;
+    out.push({ ring:ring.map(c=>[c[0],c[1]]), tags:{height:String(h),_src:"sat"} });
+  }
+  if(!out.length) return 0;
+  BUILDINGS=out;
+  if(map.getSource("buildings")) map.getSource("buildings").setData(buildingsGeo());
+  render(); fitRoute(); scheduleReroute();
+  document.getElementById("status").textContent=`ความสูงวัดจริง ${out.length} ตึก (${label||"GOB 2.5D"}) — เงาคำนวณจากความสูงวัดจริงแล้ว`;
+  return out.length;
+}
+document.getElementById("loadH").addEventListener("click",()=>document.getElementById("heightfile").click());
+document.getElementById("heightfile").addEventListener("change",(ev)=>{
+  const f=ev.target.files[0]; if(!f) return;
+  document.getElementById("status").textContent="กำลังอ่านไฟล์ความสูง…";
+  const rd=new FileReader();
+  rd.onload=()=>{ try{ if(!applyHeightGeoJSON(JSON.parse(rd.result),"ไฟล์ที่เลือก")) document.getElementById("status").textContent="ไฟล์ไม่มีความสูงที่ใช้ได้ (ต้องมี property height)"; }
+    catch(e){ document.getElementById("status").textContent="อ่านไฟล์ไม่สำเร็จ: "+String(e.message).slice(0,100); } };
+  rd.readAsText(f);
+});
+let curPitch=45;
+document.getElementById("view3d").addEventListener("click",(e)=>{
+  if(curPitch>5){ curPitch=0; e.target.textContent="มุม 3D"; }
+  else { curPitch=50; e.target.textContent="มุมบน-ลง-ล่าง"; }
+  map.easeTo({pitch:curPitch, bearing:TBEAR, duration:700});
+});
+</script>
+</body>
+</html>
