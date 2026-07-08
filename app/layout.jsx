@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "เดินกรุงเทพ — Walk BKK",
+  title: "walkwe — เดินกรุงเทพ",
   description: "แอพช่วยให้คนเดินกรุงเทพได้ประสบการณ์ดีที่สุด — ปลอดภัย ร่ม สบาย",
 };
 
