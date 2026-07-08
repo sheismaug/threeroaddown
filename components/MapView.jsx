@@ -432,6 +432,18 @@ async function fetchWalkNet(bbox) {
   const cacheKey = "walknet5:" + bbox.map((x) => Math.round(x * 1000)).join(",");
   try { const cch = localStorage.getItem(cacheKey); if (cch) return JSON.parse(cch); } catch (e) {}
   const b = bbox.join(",");
+  // 0) ไฟล์สำเร็จรูปที่ฝังมากับเว็บ (public/data/walknet_pathumwan.json) — โหลดทันที ไม่ต้องรอ OSM
+  //    ทำให้ demo เปิดครั้งแรกก็มีเส้นเกาะไฟเลย ไม่ขึ้นแถบ "กำลังโหลด" (ถ้าไม่มีไฟล์ = ข้ามไปข้อ 1)
+  try {
+    const rs = await fetch("/data/walknet_pathumwan.json");
+    if (rs.ok) {
+      const o = await rs.json();
+      if (o && o.ways && o.ways.length) {
+        try { localStorage.setItem(cacheKey, JSON.stringify(o)); } catch (e) {}
+        return o;
+      }
+    }
+  } catch (e) {}
   // 1) ผ่านเซิร์ฟเวอร์ (มี cache — โหลดครั้งต่อไปเร็วทันที)
   try {
     const r = await fetch("/api/walknet?bbox=" + encodeURIComponent(b));
