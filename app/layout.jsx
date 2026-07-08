@@ -5,6 +5,14 @@ export const metadata = {
   description: "แอพช่วยให้คนเดินกรุงเทพได้ประสบการณ์ดีที่สุด — ปลอดภัย ร่ม สบาย",
 };
 
+// mobile-friendly: เต็มจอ edge-to-edge (viewport-fit=cover → env(safe-area-*) ทำงาน), ล็อกซูมเริ่มต้น 1
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#150b26",
+};
+
 const FONT = "'Inter', 'Noto Sans Thai', system-ui, sans-serif";
 
 export default function RootLayout({ children }) {

@@ -759,7 +759,7 @@ function PlaceInput({ value, onChange, onPick, onEnter, placeholder }) {
     if (local.length) { setSugs(local); setOpen(true); }
     tRef.current = setTimeout(async () => { const r = await suggestPlaces(v); if (r.length) { setSugs(r); setOpen(true); } }, 250);
   }
-  const istyle = { width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--bdi-line)", background: "rgba(10,4,22,.75)", color: "var(--bdi-text)", fontSize: 14, outline: "none" };
+  const istyle = { width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--bdi-line)", background: "rgba(10,4,22,.75)", color: "var(--bdi-text)", fontSize: 16, outline: "none" };
   return (
     <div style={{ position: "relative" }}>
       <input value={value} onChange={(e) => handle(e.target.value)} onFocus={() => { if (sugs.length) setOpen(true); }} onBlur={() => setTimeout(() => setOpen(false), 160)}
@@ -1245,9 +1245,9 @@ export default function MapView({ apiRef }) {
       <style>{`
         .wb-card{position:absolute;background:var(--bdi-surface);border:1px solid var(--bdi-line);color:var(--bdi-text);border-radius:14px;box-shadow:0 4px 18px rgba(0,0,0,.45);font-family:inherit;z-index:1000;}
         .wb-route{left:10px;right:10px;bottom:10px;padding:0 14px 12px;z-index:1300;max-height:52%;overflow:auto;}
-        .wb-nav{top:0;left:0;right:0;border-radius:0;background:linear-gradient(90deg,#0e0618,#3d1d5e);color:#fff;padding:12px 16px;z-index:1700;border:none;}
+        .wb-nav{top:0;left:0;right:0;border-radius:0;background:linear-gradient(90deg,#0e0618,#3d1d5e);color:#fff;padding:calc(12px + env(safe-area-inset-top)) 16px 12px;z-index:1700;border:none;}
         .wb-startbtn{display:block;width:100%;margin-top:8px;padding:10px;border:none;border-radius:10px;background:var(--bdi-green);color:#14081f;font-weight:800;font-size:14px;cursor:pointer;}
-        .wb-search{left:10px;right:10px;top:56px;padding:10px 12px;z-index:1450;}
+        .wb-search{left:10px;right:10px;top:calc(56px + env(safe-area-inset-top));padding:10px 12px;z-index:1450;}
       `}</style>
 
       <div ref={mapEl} style={{ height: "100%", width: "100%" }} />
@@ -1302,7 +1302,7 @@ export default function MapView({ apiRef }) {
 
       {/* Chips เปิด/ปิดเลเยอร์ ตาม Figma (Frame 20) */}
       {!nav?.active ? (
-        <div className="bdi-chips" style={{ top: searchOpen ? 246 : 106 }}>
+        <div className="bdi-chips" style={{ top: `calc(${searchOpen ? 246 : 106}px + env(safe-area-inset-top))` }}>
           {CHIP_DEFS.map((c) => (
             <button type="button" key={c.k} className={"bdi-chip" + (chips[c.k] ? " on" : "")} onClick={() => toggleChip(c.k)}>{c.label}</button>
           ))}
