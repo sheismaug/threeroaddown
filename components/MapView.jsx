@@ -378,7 +378,7 @@ function popupHtml(p) {
   return `<div style="max-width:240px;font-family:system-ui"><div style="font-weight:700;color:${catColor(p.cat)}">${lbl}</div><div style="font-size:13px;margin:4px 0;white-space:pre-wrap">${(p.comment || "").slice(0, 240)}</div><div style="font-size:12px;color:#555">สถานะ: <b>${p.state || "-"}</b></div><div style="font-size:11px;color:#888">${date}</div>${photo}</div>`;
 }
 // ── 🌉 เส้นทางร่ม Skywalk (จุดขายหลัก) ──
-// แนวเดิน MBK ชั้น 2 → Skywalk แยกปทุมวัน → Siam Discovery → Siam Center → ทางเชื่อม Paragon → BTS สยาม
+// แนวเดิน MBK ชั้น 2 → Skywalk แยกปทุมวัน → Siam Discovery → Siam Center ชั้น 2 → ลงบันไดเลื่อนชั้น 1 (Starbucks) → ประตูทางออก → ลงบันได → BTS สยาม
 // อิงแนวเดียวกับ shade_demo_3d.html / Figma frame "route" (เดินใต้หลังคา-ในห้างเกือบตลอด)
 const SKYWALK_PATH = [
   [100.52980, 13.74465], // ในตึก MBK ชั้น 2 (โถงกลาง)
@@ -395,10 +395,11 @@ const SKYWALK_PATH = [
   [100.53176, 13.74642], // ออก SD ฝั่งตะวันออกเฉียงใต้
   [100.53192, 13.74634], // ทางเชื่อม SD → Siam Center
   [100.53215, 13.74652], // เดินในตึก Siam Center ชั้น 2
-  [100.53265, 13.74640], // ทางเดินในตึก
-  [100.53298, 13.74608], // ออกฝั่งตะวันออก สู่ทางเชื่อม
-  [100.53350, 13.74600], // ทางเชื่อมหน้า Siam Paragon
-  [100.53415, 13.74588], // ทางขึ้น BTS สยาม ฝั่ง Siam Center/Paragon (ไม่ต้องข้ามถนน)
+  [100.53265, 13.74640], // ทางเดินในตึก SC ชั้น 2
+  [100.53288, 13.74620], // ฝั่งใต้ SC ชั้น 2 → ลงบันไดเลื่อนไปชั้น 1
+  [100.53312, 13.74602], // Starbucks ชั้น 1 → เดินตรงไปประตูทางออก
+  [100.53332, 13.74594], // ประตูทางออก → เดินลงบันได
+  [100.53339, 13.74589], // ลงบันได → เข้า BTS สยาม (ตรงลูกศรเขียว/บันได)
 ];
 // ทางเท้าเลียบถนนใหญ่พระราม 1 ฝั่งใต้ (ใต้รางบีทีเอส — ไฟถนน BMA หนาแน่น เหมาะเดินกลางคืน)
 const MAINROAD_PATH = [
@@ -621,8 +622,8 @@ function pickRoutes(scored) {
 const LANDMARKS = [
   { aliases: ["สนามกีฬาแห่งชาติ", "สนามกีฬา", "national stadium", "สนามศุภ", "ศุภชลาศัย"], coord: [100.5294, 13.7466], name: "สนามกีฬาแห่งชาติ" },
   { aliases: ["สยามพารากอน", "พารากอน", "paragon"], coord: [100.5347, 13.7462], name: "สยามพารากอน" },
-  { aliases: ["สยามสแควร์", "สยาม", "siam"], coord: [100.5331, 13.7456], name: "สยาม (BTS)" },
-  { aliases: ["มาบุญครอง", "mbk", "เอ็มบีเค"], coord: [100.5300, 13.7445], name: "MBK / มาบุญครอง" },
+  { aliases: ["สยามสแควร์", "สยาม", "siam"], coord: [100.53339, 13.74589], name: "สยาม (BTS)" },
+  { aliases: ["มาบุญครอง", "mbk", "เอ็มบีเค"], coord: [100.52980, 13.74462], name: "MBK / มาบุญครอง" },
   { aliases: ["โรงพยาบาลจุฬา", "รพ.จุฬา", "รพจุฬา", "chula hospital"], coord: [100.5356, 13.7314], name: "รพ.จุฬาฯ", query: "โรงพยาบาลจุฬาลงกรณ์ ปทุมวัน กรุงเทพ" },
   { aliases: ["จุฬาลงกรณ์มหาวิทยาลัย", "จุฬาลงกรณ์", "จุฬา", "chulalongkorn", "chula"], coord: [100.5318, 13.7378], name: "จุฬาลงกรณ์มหาวิทยาลัย" },
   { aliases: ["สามย่านมิตรทาวน์", "สามย่าน", "samyan"], coord: [100.5283, 13.7320], name: "สามย่าน" },
@@ -912,7 +913,7 @@ export default function MapView({ apiRef }) {
         bridge([[13.74642, 100.53176], [13.74634, 100.53192]]);
 
         // ── Siam Center ชั้น 2 — เดินต่อจากทางเชื่อม ──
-        corridor([[13.74634, 100.53192], [13.74652, 100.53215], [13.74640, 100.53265], [13.74608, 100.53298]]); // ทางหลักในตึก
+        corridor([[13.74634, 100.53192], [13.74652, 100.53215], [13.74640, 100.53265], [13.74618, 100.53288]]); // ทางหลักในตึก (ชั้น 2) จบที่ฝั่งใต้เพื่อลงชั้น 1
         door(13.74634, 100.53192, "เข้า Siam Center ชั้น 2 (จากทางเชื่อม Siam Discovery)");
         corridor([[13.74652, 100.53215], [13.74672, 100.53225]], 7);  // แยกไปลิฟต์
         corridor([[13.74640, 100.53265], [13.74663, 100.53272]], 7);  // แยกไปห้องน้ำ
@@ -920,14 +921,18 @@ export default function MapView({ apiRef }) {
         lift(13.74676, 100.53228);
         wc(13.74668, 100.53276);
         label(13.74655, 100.53250, "SIAM CENTER");
-        door(13.74608, 100.53298, "ออกสู่ทางเชื่อม Paragon (ฝั่งตะวันออก)");
 
-        // Siam Paragon
+        // ── ลงชั้น 1 (Starbucks) → ประตูทางออก (ฝั่ง ตอ.) → ลงบันได → เข้า BTS สยาม (จุดที่ user mark) ──
+        esc(13.74620, 100.53290);  // บันไดเลื่อนลงชั้น 1 (ฝั่งใต้ SC)
+        corridor([[13.74620, 100.53288], [13.74602, 100.53312], [13.74594, 100.53332], [13.74589, 100.53339]], 9); // ชั้น 1: Starbucks → ประตูทางออก → บันได → ทางเข้า BTS
+        label(13.74606, 100.53312, "Starbucks<br/>ชั้น 1", "#b7eb3e");
+        door(13.74594, 100.53332, "ประตูทางออก Siam Center (ชั้น 1)");
+        stair(13.74589, 100.53339);  // ลูกศรเขียว = บันได/ทางเข้า BTS (จุดปลายทาง E)
+        door(13.74589, 100.53339, "ทางเข้า BTS สยาม (ลงบันไดจากทางออก Siam Center ชั้น 1)");
+        label(13.74581, 100.53345, "BTS สยาม", "#b7eb3e");
+
+        // Siam Paragon — POI ข้างเคียง (เส้นทางไม่ผ่านแล้ว)
         label(13.74675, 100.53435, "SIAM PARAGON");
-
-        // BTS สยาม — ทางขึ้นฝั่ง Siam Center/Paragon (จบเส้นที่นี่ ไม่ต้องข้ามถนน)
-        door(13.74588, 100.53415, "ทางขึ้น BTS สยาม ฝั่ง Siam Center/Paragon");
-        label(13.74560, 100.53425, "BTS สยาม", "#b7eb3e");
       }
       // แผนผังตึกโชว์เฉพาะตอน (1) เลือกเส้น Skywalk และ (2) ซูมใกล้พอ (≥16) — กันเห็นเป็น "กล่องดำ" ตอนมองภาพรวม
       ctx.current.updateIndoor = () => {
@@ -1018,12 +1023,21 @@ export default function MapView({ apiRef }) {
         if (mr) routes.push(mr);
         c.baseRoutes = routes; c.lastStart = start; c.lastEnd = end; c.sName = sName; c.eName = eName; c.note = note; c.lastOsm = null;
         c.routeKey = key;
-        const sIcon = (txt, bg) => L.divIcon({ className: "", html: `<div style="background:${bg};color:white;border-radius:50%;width:22px;height:22px;line-height:22px;text-align:center;font-weight:700;font-size:12px">${txt}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] });
+        // หมุดปักชัดเจน: วงกลมใหญ่ขอบขาว + หางปักลงจุด + ป้ายกำกับด้านบน (start=เขียว, end=แดง)
+        const pinIcon = (letter, bg, tag, glow) => L.divIcon({
+          className: "",
+          html: `<div style="display:flex;flex-direction:column;align-items:center;filter:drop-shadow(0 3px 5px rgba(0,0,0,.6))">
+            <div style="background:${bg};color:#fff;font-weight:800;font-size:10.5px;letter-spacing:.5px;padding:2px 9px;border-radius:999px;white-space:nowrap;border:1.5px solid #fff;margin-bottom:2px">${tag}</div>
+            <div style="background:${bg};color:#fff;border:3px solid #fff;border-radius:50%;width:32px;height:32px;display:grid;place-items:center;font-weight:800;font-size:16px;line-height:1;box-shadow:0 0 0 4px ${glow}">${letter}</div>
+            <div style="width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:12px solid #fff;margin-top:-1px"></div>
+          </div>`,
+          iconSize: [80, 68], iconAnchor: [40, 64],
+        });
         // วาดหมุด+เส้นใหม่ทุกรอบ (เส้นจากกราฟเปลี่ยนรูปตามเวลา) · โชว์เฉพาะ 2 เส้นที่ถูกเลือก
         c.redrawRoutes = (cands) => {
           c.routeLayer.clearLayers();
-          L.marker([start[1], start[0]], { icon: sIcon("S", "#2a9d54") }).bindPopup("จุดเริ่ม: " + sName).addTo(c.routeLayer);
-          L.marker([end[1], end[0]], { icon: sIcon("E", "#c1121f") }).bindPopup("ปลายทาง: " + eName).addTo(c.routeLayer);
+          L.marker([start[1], start[0]], { icon: pinIcon("S", "#16a34a", "จุดเริ่ม", "rgba(22,163,74,.35)"), zIndexOffset: 1000 }).bindPopup("จุดเริ่ม: " + sName).addTo(c.routeLayer);
+          L.marker([end[1], end[0]], { icon: pinIcon("E", "#dc2626", "ปลายทาง", "rgba(220,38,38,.35)"), zIndexOffset: 1000 }).bindPopup("ปลายทาง: " + eName).addTo(c.routeLayer);
           c.polylines = cands.map((r) => L.polyline(r.coordinates.map(([lon, lat]) => [lat, lon]), { color: "#888", weight: 4, opacity: 0.6, dashArray: "6 6" }).addTo(c.routeLayer));
           c.select = (i) => {
             c.polylines.forEach((pl, j) => {
