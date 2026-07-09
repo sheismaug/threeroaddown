@@ -404,6 +404,10 @@ const SKYWALK_PATH = [
 // จุดเริ่มแยกตามโหมด (เฉพาะต้นทาง MBK): กลางวันเริ่ม Skywalk ชั้น 2 · กลางคืนออกประตูระดับพื้น (ใกล้สะพานลอยแยกปทุมวัน) แล้วเลาะไฟถนน
 const MBK_L2 = [100.52980, 13.74462];        // ต้นทาง Skywalk (MBK ชั้น 2)
 const MBK_NIGHT_EXIT = [100.53025, 13.74450]; // ประตูออกระดับพื้น (กลางคืน) — จุดที่ user วง
+const CHULA64_W = [100.53051, 13.74421];      // ปลายตะวันตก ซอยจุฬาฯ 64 (โหนดจริง ไฟ 4 ต้น)
+const CHULA64_E = [100.53249, 13.74430];      // ปลายตะวันออก ซอยจุฬาฯ 64 (โหนดจริง ไฟ 3 ต้น)
+const SIAM_LAMP_VIA = [100.53272, 13.74461];  // จุดแวะบังคับในซอยสยามสแควร์ซอย 3 (โหนดไฟ 6 ต้น) — กลางคืนต้องผ่านก่อนถึง BTS
+const NIGHT_VIAS = [CHULA64_W, CHULA64_E, SIAM_LAMP_VIA]; // กลางคืน MBK→สยาม: ลากตามซอยจุฬาฯ 64 → ขึ้นซอย 3 → BTS
 // ทางเท้าเลียบถนนใหญ่พระราม 1 ฝั่งใต้ (ใต้รางบีทีเอส — ไฟถนน BMA หนาแน่น เหมาะเดินกลางคืน)
 const MAINROAD_PATH = [
   [100.53010, 13.74530], // หน้า MBK ริมพระราม 1
@@ -625,7 +629,7 @@ function pickRoutes(scored) {
 const LANDMARKS = [
   { aliases: ["สนามกีฬาแห่งชาติ", "สนามกีฬา", "national stadium", "สนามศุภ", "ศุภชลาศัย"], coord: [100.5294, 13.7466], name: "สนามกีฬาแห่งชาติ" },
   { aliases: ["สยามพารากอน", "พารากอน", "paragon"], coord: [100.5347, 13.7462], name: "สยามพารากอน" },
-  { aliases: ["สยามสแควร์", "สยาม", "siam"], coord: [100.5331, 13.7456], name: "สยาม (BTS)" },
+  { aliases: ["สยามสแควร์", "สยาม", "siam"], coord: [100.53298, 13.74582], name: "สยาม (BTS)" },
   { aliases: ["มาบุญครอง", "mbk", "เอ็มบีเค"], coord: [100.52980, 13.74462], name: "MBK / มาบุญครอง" },
   { aliases: ["โรงพยาบาลจุฬา", "รพ.จุฬา", "รพจุฬา", "chula hospital"], coord: [100.5356, 13.7314], name: "รพ.จุฬาฯ", query: "โรงพยาบาลจุฬาลงกรณ์ ปทุมวัน กรุงเทพ" },
   { aliases: ["จุฬาลงกรณ์มหาวิทยาลัย", "จุฬาลงกรณ์", "จุฬา", "chulalongkorn", "chula"], coord: [100.5318, 13.7378], name: "จุฬาลงกรณ์มหาวิทยาลัย" },
@@ -1059,9 +1063,27 @@ export default function MapView({ apiRef }) {
         // คำนวณ candidates + คะแนน + วาด — ใช้ร่วมกัน 3 ทาง: ตอบเร็ว (osm=null), เติม OSM แล้ว, และตอนเลื่อนเวลา
         c.refresh = (osm, fit) => {
           const cands = c.baseRoutes.map((r, i) => ({ ...r, index: i }));
-          // กลางคืน + ต้นทางเป็น MBK → เริ่มเดินจากประตูระดับพื้น (ไม่ใช่ชั้น 2) เพราะกลางคืนเดินพื้นเลาะไฟถนน
-          const gStart = (timeWeights(c.routeHour).night && c.lastStart && haversine(c.lastStart, MBK_L2) < 150) ? MBK_NIGHT_EXIT : c.lastStart;
-          const g = c.walkNet ? graphRoute(c.walkNet, gStart, c.lastEnd, c.routeHour, c.lampGrid, c.bldgs, osm) : null;
+          // กลางคืน + ต้นทางเป็น MBK → เริ่มประตูระดับพื้น + บังคับแวะซอยไฟ (สยามสแควร์ซอย 3) ก่อนถึง BTS
+          const nightMBK = !!(timeWeights(c.routeHour).night && c.lastStart && haversine(c.lastStart, MBK_L2) < 150);
+          const gStart = nightMBK ? MBK_NIGHT_EXIT : c.lastStart;
+          let g = null;
+          if (c.walkNet) {
+            if (nightMBK) {
+              // เดินหลายท่อนต่อกัน: ประตู → จุดแวะไฟถนนล่าง → จุดแวะซอยไฟ → ปลายทาง → บังคับผ่านเสาไฟเสมอ
+              const pts = [gStart, ...NIGHT_VIAS, c.lastEnd];
+              let coords = null, ok = true;
+              for (let i = 0; i < pts.length - 1; i++) {
+                const seg = graphRoute(c.walkNet, pts[i], pts[i + 1], c.routeHour, c.lampGrid, c.bldgs, osm);
+                if (!seg) { ok = false; break; }
+                coords = coords ? coords.concat(seg.coordinates.slice(1)) : seg.coordinates.slice();
+              }
+              if (ok && coords) {
+                let distM = 0; for (let i = 1; i < coords.length; i++) distM += haversine(coords[i - 1], coords[i]);
+                g = { graphed: true, coordinates: coords, distance_m: Math.round(distM), duration_min: Math.max(1, Math.round(distM / 75)), steps: [] };
+              }
+            }
+            if (!g) g = graphRoute(c.walkNet, gStart, c.lastEnd, c.routeHour, c.lampGrid, c.bldgs, osm);
+          }
           if (g) { g.index = cands.length; cands.push(g); }
           const scored = scoreRoutes(cands, osm || { ok: false, trees: [], green: [], toilets: [], cameras: [] }, c.problems, c.lamps, c.bldgs, c.routeHour);
           const picks = pickRoutes(scored);
