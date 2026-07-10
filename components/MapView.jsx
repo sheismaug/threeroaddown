@@ -221,7 +221,8 @@ const M_LAT_D = 110540, M_LON_D = 111320 * Math.cos((13.7449 * Math.PI) / 180);
 // เวกเตอร์เงา "ต่อความสูง 1 เมตร" (องศา lon/lat) — null ถ้าดวงอาทิตย์ต่ำ/กลางคืน
 function shadowPerM(sun) {
   if (!sun || sun.elevation <= 3) return null;
-  const k = 1 / Math.tan((sun.elevation * Math.PI) / 180);
+  // cap เงายาวสุด 5 เท่าความสูงตึก — เช้าตรู่/เย็นมากๆ เงาทางทฤษฎียาวหลายร้อยเมตร ทำให้แผนที่ร่มเป็นแถบมั่วและเส้นแกว่ง
+  const k = Math.min(5, 1 / Math.tan((sun.elevation * Math.PI) / 180));
   const dir = ((sun.azimuth + 180) * Math.PI) / 180; // เงาทอดตรงข้ามดวงอาทิตย์
   return { dLon: (Math.sin(dir) * k) / M_LON_D, dLat: (Math.cos(dir) * k) / M_LAT_D };
 }
@@ -237,11 +238,30 @@ function shadowPrep(per, bldgs) {
   });
 }
 // จุดนี้อยู่ในเงาตึก (หรือในตัวตึก = เดินทะลุห้าง) ไหม — Minkowski sum แบบสุ่มช่วง t
-function ptShaded(x, y, prep) {
+// skipInterior = ใช้ตอน routing: ไม่นับ "ในตัวตึก" ว่าร่ม (กันเส้นถูกดูดมุดเข้าตึก — เดินทะลุห้างมีเฉพาะเส้น Skywalk ที่วาดแนวจริงไว้)
+// step 0.1 (เดิม 0.2) — เงายาวตอนแดดต่ำเคยมี "รูโหว่" ระหว่างจุด sample ทำให้ตรวจร่มติดๆ ดับๆ เส้นเลยแกว่ง
+function ptShaded(x, y, prep, skipInterior) {
   if (!prep) return false;
   for (const s of prep) {
     if (x < s.minx || x > s.maxx || y < s.miny || y > s.maxy) continue;
-    for (let t = 0; t <= 1.0001; t += 0.2) { if (pip(x - s.dx * t, y - s.dy * t, s.ring)) return true; }
+    for (let t = skipInterior ? 0.15 : 0; t <= 1.0001; t += 0.1) { if (pip(x - s.dx * t, y - s.dy * t, s.ring)) return true; }
+  }
+  return false;
+}
+// ดัชนี footprint ตึก (bbox precheck) — เช็ค "จุดอยู่ในตัวตึกไหม" เร็วพอเรียกใน Dijkstra ทุก edge
+function buildingIndex(bldgs) {
+  if (!bldgs || !bldgs.length) return null;
+  return bldgs.map((b) => {
+    let minx = 1e9, miny = 1e9, maxx = -1e9, maxy = -1e9;
+    for (const p of b.ring) { if (p[0] < minx) minx = p[0]; if (p[0] > maxx) maxx = p[0]; if (p[1] < miny) miny = p[1]; if (p[1] > maxy) maxy = p[1]; }
+    return { ring: b.ring, minx, miny, maxx, maxy };
+  });
+}
+function inBuilding(p, idx) {
+  if (!idx || !p) return false;
+  for (const s of idx) {
+    if (p[0] < s.minx || p[0] > s.maxx || p[1] < s.miny || p[1] > s.maxy) continue;
+    if (pip(p[0], p[1], s.ring)) return true;
   }
   return false;
 }
@@ -337,14 +357,18 @@ function scoreRoutes(routes, osm, problems, lamps, bldgs, hour) {
     let shade = shadeR == null ? null : Math.round(shadeR * 100);
     if (r.skywalk && !WT.night) shade = Math.max(shade ?? 0, 95); // เส้น Skywalk/เดินทะลุห้าง = ร่มเกือบตลอด (เฉพาะตอนมีแดด)
     let light = lightR == null ? null : Math.round(lightR * 100);
-    // กลางคืนช่วงห้างเปิด: ทางเชื่อม/ในห้างมี "ไฟของอาคาร" ตลอดแนว (ไม่ใช่เสาไฟถนน BMA)
-    if (r.skywalk && WT.night && mallOpen) light = Math.max(light ?? 0, 90);
+    // ไทม์ไลน์คำแนะนำ: 10-18 skywalk (ร่ม) · 18-22 skywalk (ไฟในห้าง — ยังเปิด เดินได้จริง) · 22-07 เส้นเสาไฟ BMA · 07-10 เส้นร่มจากกราฟ
+    // กลางคืนช่วงห้างเปิด: ทางเชื่อม/ในห้างมี "ไฟของอาคาร" ตลอดแนว — บูสต์ 99 กันเส้นกราฟคะแนนสูงมาเสมอ/แซง
+    if (r.skywalk && WT.night && mallOpen) light = Math.max(light ?? 0, 99);
+    // 💡 เส้นไฟ hardcode (MBK↔สยาม): บูสต์เฉพาะช่วงห้างปิด (22:00-06:59) — ก่อนนั้นให้ skywalk ชนะ
+    if (r.nightlamp && WT.night && !mallOpen) light = Math.max(light ?? 0, 99);
     // หมายเหตุ: เส้นถนนใหญ่ให้คะแนนตามข้อมูลเสาไฟ BMA จริงเท่านั้น (ไม่ boost)
     // — คำแนะนำกลางคืนจะสอดคล้องกับจุดไฟเหลืองที่ผู้ใช้เห็นบนแผนที่เสมอ
     let num = 0, den = 0; const add = (v, w) => { if (v != null && w) { num += v * w; den += w; } };
     add(shade, WT.shade); add(light, WT.light);
     let comfort = den ? Math.round(num / den) : null;
     if (mallClosed) comfort = comfort == null ? 15 : Math.min(comfort, 25); // ห้างปิด → กดคะแนนลง ระบบจะไม่แนะนำเส้นนี้
+    if (r.nightlamp && !WT.night) comfort = comfort == null ? 15 : Math.min(comfort, 25); // เส้นไฟเป็นของกลางคืน — กลางวันไม่ให้ขึ้นมาแข่งเส้นร่ม
     // รายชื่อห้องน้ำใกล้เส้นทาง (ชื่อ + ระยะจากต้นทาง) — ส่งให้ผู้ช่วย AI ตอบได้ว่าห้องน้ำอยู่ตรงไหนจริง ไม่ใช่เดาเอง
     const rcum = [0]; for (let i = 1; i < r.coordinates.length; i++) rcum[i] = rcum[i - 1] + haversine(r.coordinates[i - 1], r.coordinates[i]);
     const stepRoad = (ix) => { for (const st of (r.steps || [])) { if (ix >= st.wpStart && ix <= st.wpEnd && st.name) return st.name; } return ""; };
@@ -404,18 +428,25 @@ const SKYWALK_PATH = [
 // จุดเริ่มแยกตามโหมด (เฉพาะต้นทาง MBK): กลางวันเริ่ม Skywalk ชั้น 2 · กลางคืนออกประตูระดับพื้น (ใกล้สะพานลอยแยกปทุมวัน) แล้วเลาะไฟถนน
 const MBK_L2 = [100.52980, 13.74462];        // ต้นทาง Skywalk (MBK ชั้น 2)
 const MBK_NIGHT_EXIT = [100.53025, 13.74450]; // ประตูออกระดับพื้น (กลางคืน) — จุดที่ user วง
-const CHULA64_W = [100.53051, 13.74421];      // ปลายตะวันตก ซอยจุฬาฯ 64 (โหนดจริง ไฟ 4 ต้น)
-const CHULA64_E = [100.53249, 13.74430];      // ปลายตะวันออก ซอยจุฬาฯ 64 (โหนดจริง ไฟ 3 ต้น)
-const SIAM_LAMP_VIA = [100.53272, 13.74461];  // จุดแวะบังคับในซอยสยามสแควร์ซอย 3 (โหนดไฟ 6 ต้น) — กลางคืนต้องผ่านก่อนถึง BTS
-const NIGHT_VIAS = [CHULA64_W, CHULA64_E, SIAM_LAMP_VIA]; // กลางคืน MBK→สยาม: ลากตามซอยจุฬาฯ 64 → ขึ้นซอย 3 → BTS
+// (ถอด NIGHT_VIAS จุดแวะบังคับซอยจุฬาฯ 64/ซอย 3 ออกแล้ว — corridor ตายตัวทับการคำนวณ ทำให้จูนน้ำหนักไฟยังไงเส้นก็ไม่เปลี่ยน
+//  ตอนนี้กลางคืนปล่อย Dijkstra เลือกตามความหนาแน่นไฟ BMA จริงล้วนๆ)
 // ทางเท้าเลียบถนนใหญ่พระราม 1 ฝั่งใต้ (ใต้รางบีทีเอส — ไฟถนน BMA หนาแน่น เหมาะเดินกลางคืน)
+// พิกัดดึงจากโครงข่ายทางเท้า OSM จริง (walknet) — เดิมเป็น 6 จุดหยาบ ลากช่วงละ ~100 ม. เส้นเลยพาดทับตึกตอนซูม
 const MAINROAD_PATH = [
-  [100.53010, 13.74530], // หน้า MBK ริมพระราม 1
-  [100.53030, 13.74545], // มุมแยกปทุมวัน (ระดับพื้น)
-  [100.53100, 13.74585], // ทางเท้าเลียบพระราม 1
-  [100.53200, 13.74577],
-  [100.53300, 13.74568],
-  [100.53420, 13.74550], // ทางขึ้น BTS สยาม ฝั่งสยามสแควร์
+  [100.53033, 13.74451], // ประตู MBK ระดับพื้น (มุมแยกปทุมวัน)
+  [100.53038, 13.74457],
+  [100.53047, 13.74461],
+  [100.53052, 13.74493], // ขึ้นเหนือเลียบพญาไท
+  [100.53061, 13.74488],
+  [100.53070, 13.74544],
+  [100.53103, 13.74582], // เลี้ยวขวาเข้าทางเท้าพระราม 1 (ใต้ราง BTS)
+  [100.53134, 13.74599],
+  [100.53145, 13.74602],
+  [100.53194, 13.74594],
+  [100.53212, 13.74591],
+  [100.53219, 13.74592],
+  [100.53257, 13.74585],
+  [100.53299, 13.74584], // ทางเข้า BTS สยาม
 ];
 // สร้างเส้นทางตามแนวที่กำหนด เมื่อต้นทาง-ปลายทางอยู่ใกล้หัว/ท้ายแนว (≤350 ม.)
 // จุดหมายที่ใกล้หัว/ท้ายแนวมาก (≤130 ม.) → จบที่ปลายแนวเลย ไม่ลากต่อ (เช่นไม่ข้ามถนนไปอีกฝั่งสถานี)
@@ -426,6 +457,15 @@ function corridorRoute(start, end, PATH) {
   if (near(start, a, 350) && near(end, b, 350)) core = PATH;
   else if (near(start, b, 350) && near(end, a, 350)) core = [...PATH].reverse();
   if (!core) return null;
+  // ✂️ ตัดแนว ณ จุดฉายของต้นทาง/ปลายทาง เมื่อจุดหมายอยู่ "ข้างแนว" (off ≤40 ม.) และตัดแล้วลดระยะ ≥50 ม.
+  // — เดิมเดินไปสุดแนวเสมอแล้วค่อยลากเข้าจุดหมาย เกิดอาการ "เดินเลยปลายทางแล้ววกกลับ" (เช่นเลย BTS สยามไป ~130 ม.)
+  // เกณฑ์ ≥50 ม. กันตัดปลายแนวที่ตั้งใจวาดละเอียด (เช่นช่วงบันได Skywalk ลง BTS) ทิ้งโดยไม่จำเป็น
+  let cum = [0]; for (let i = 1; i < core.length; i++) cum[i] = cum[i - 1] + haversine(core[i - 1], core[i]);
+  const pe = nearestOnRoute(end, core, cum);
+  if (pe.off <= 40 && cum[cum.length - 1] - pe.along >= 50) core = [...core.slice(0, pe.seg + 1), pointAtDistance(core, cum, pe.along)];
+  cum = [0]; for (let i = 1; i < core.length; i++) cum[i] = cum[i - 1] + haversine(core[i - 1], core[i]);
+  const ps = nearestOnRoute(start, core, cum);
+  if (ps.off <= 40 && ps.along >= 50) core = [pointAtDistance(core, cum, ps.along), ...core.slice(ps.seg + 1)];
   const head = near(start, core[0], 130) ? [] : [start];
   const tail = near(end, core[core.length - 1], 130) ? [] : [end];
   const path = [...head, ...core, ...tail];
@@ -434,6 +474,27 @@ function corridorRoute(start, end, PATH) {
 }
 function skywalkRoute(start, end) { const r = corridorRoute(start, end, SKYWALK_PATH); return r ? { ...r, skywalk: true } : null; }
 function mainRoadRoute(start, end) { const r = corridorRoute(start, end, MAINROAD_PATH); return r ? { ...r, mainroad: true } : null; }
+// ── 💡 เส้นทางไฟกลางคืน MBK ↔ สยาม (จุดขาย "ทางสว่าง ไม่เปลี่ยว") ──
+// hardcode ตามแนวซอยไฟหนาแน่นที่ user เลือก (ตรวจกับข้อมูลเสาไฟ BMA แล้ว: ใกล้แนว ≤30 ม. ~14 ต้น
+// เฉพาะซอยขึ้น BTS ช่วงเหนือมีไฟถี่สุดในย่าน ~15 ต้น) — ยอมอ้อมกว่าเส้นสั้นสุด ~130 ม. แลกกับเดินใต้ไฟเกือบตลอด
+// พิกัดดึงจากโครงข่ายทางเท้า OSM จริง (walknet_pathumwan) — เดินได้จริงทุกช่วง
+// แนว: ประตู MBK ระดับพื้น → เลาะซอยจุฬาฯ 64 → ขึ้นซอยไฟข้างสยามสแควร์วัน → BTS สยาม
+const NIGHT_LAMP_PATH = [
+  [100.53033, 13.74451], // ประตูออก MBK ระดับพื้น (ฝั่งใต้ มุมแยกปทุมวัน)
+  [100.53064, 13.74449], // เข้าแนวซอยจุฬาฯ 64
+  [100.53068, 13.74482],
+  [100.53113, 13.74476],
+  [100.53158, 13.74470],
+  [100.53171, 13.74468],
+  [100.53178, 13.74471],
+  [100.53222, 13.74463],
+  [100.53271, 13.74455],
+  [100.53279, 13.74462], // เลี้ยวซ้ายเข้าปากซอยแถวเสาไฟทันที (เดิมมีจุด junction เกินทำให้เดินเลยปากซอย ~17 ม. แล้ววกกลับ)
+  [100.53289, 13.74522], // เดินขึ้นเหนือทาบแถวเสาไฟ BMA (lon ~100.5328-100.5330)
+  [100.53297, 13.74572],
+  [100.53299, 13.74584], // ทางเข้า BTS สยาม
+];
+function nightLampRoute(start, end) { const r = corridorRoute(start, end, NIGHT_LAMP_PATH); return r ? { ...r, nightlamp: true } : null; }
 // ── 🧭 Routing ของเราเอง: กราฟทางเท้า OSM + Dijkstra ถ่วงน้ำหนัก "ไฟ BMA" (กลางคืน) / "เงาตึก" (กลางวัน) ──
 // ทำให้เส้น comfort ยอมอ้อมเข้าซอยที่สว่าง/ร่มจริง แทนที่จะใช้แค่ทางสั้นสุดจาก ORS
 async function fetchWalkNet(bbox) {
@@ -482,7 +543,8 @@ async function fetchWalkNet(bbox) {
   return null;
 }
 // รวม way เป็นกราฟ: โหนด = จุดพิกัด (ปัดทศนิยม 5 ตำแหน่ง ≈ 1 ม. → จุดตัดซอยเชื่อมถึงกัน)
-function buildGraph(ways) {
+function buildGraph(ways, bldgs) {
+  const bIdx = buildingIndex(bldgs); // ใช้กรอง snap edge ที่ลัดทะลุตึก (ถ้าข้อมูลตึกยังไม่มา factor ตอน routing กันซ้ำอีกชั้น)
   const nodes = new Map();
   const keyOf = (p) => p[0].toFixed(5) + "," + p[1].toFixed(5);
   const addEdge = (a, b2) => {
@@ -524,6 +586,7 @@ function buildGraph(ways) {
         const n2 = nodes.get(k2); const d = haversine(n.pt, n2.pt);
         if (d > 0.5 && d <= SNAP && !n.edges.some((e) => e.to === k2)) {
           const mid = [(n.pt[0] + n2.pt[0]) / 2, (n.pt[1] + n2.pt[1]) / 2];
+          if (inBuilding(mid, bIdx)) continue; // ❌ snap ข้ามช่องว่างได้ แต่ห้ามลัดทะลุตัวตึก
           n.edges.push({ to: k2, d, mid });
         }
       }
@@ -569,24 +632,37 @@ function graphRoute(nodes, start, end, hour, lampGrid, bldgs, osm) {
   if (!nodes || !nodes.size || !start || !end) return null;
   const WTg = timeWeights(hour);
   const dtg = new Date(); if (hour != null) dtg.setHours(hour, 0, 0, 0);
-  const prep = WTg.night ? null : shadowPrep(shadowPerM(sunPosition(dtg, start[1], start[0])), bldgs);
+  const sunG = WTg.night ? null : sunPosition(dtg, start[1], start[0]);
+  const prep = WTg.night ? null : shadowPrep(shadowPerM(sunG), bldgs);
+  // แดดต่ำจริงๆ เท่านั้น (elevation <8° เช่นเช้าตรู่หน้าหนาว) ค่อยเลิกไล่เงา — เงายาวพาดทั่วย่านอยู่แล้ว
+  // (เดิมตั้ง <18° กว้างไป ทำให้ 07:00 หน้าร้อนใช้คนละโหมดกับ 08:00 เส้นออกตัวคนละทิศ)
+  const lowSunG = !WTg.night && (!sunG || sunG.elevation < 8);
   const covered = (osm && osm.coveredWays) || [];
   // เช็ค "สว่าง/ร่ม" ทั้ง midpoint และหัว-ท้าย edge — กันช่วงยาว ~50 ม. ที่จุดกลางบังเอิญตกร่องว่างระหว่างเสาไฟ
   // ถูกตัดสินว่ามืดทั้งที่ปลายทั้งสองมีไฟ · กลางคืนถ่วง ×3.2 (เดิม 2.6) ให้เส้นยอมอ้อมมาเกาะถนนใหญ่ที่มีไฟมากขึ้น
+  const bIdx = buildingIndex(bldgs);
   const factor = (mid, p1, p2) => {
+    // 🚫 เส้นกราฟห้ามมุดตึก: edge ที่จุดกลางอยู่ในตัวตึก = แพง ×6 (ครอบคลุมทั้ง edge จาก OSM และ edge ที่เกิดจาก snap)
+    // "เดินทะลุห้าง" มีเฉพาะเส้น Skywalk ที่วาดตามแนวทางเดินจริงเท่านั้น
+    const inb = inBuilding(mid, bIdx) ? 6 : 1;
     if (WTg.night) {
-      // โหมด "เกาะไฟเต็มที่" — ต้นทุนต่ำลงเมื่อไฟหนาแน่น (ต่ำกว่า 1 ได้) เพื่อ "ดูด" เส้นเข้าย่านไฟเยอะ
-      // ไม่ลงโทษความมืดหนัก (แค่ ×1.5) เพราะย่านไฟเยอะจริง (สยามสแควร์) มีจุดมืดคั่นบ้าง ถ้าลงโทษหนักจะไล่เส้นออก
-      // รัศมีนับ 60 ม. — ทางเดินที่เยื้องจากแนวเสาไฟยังนับว่าสว่าง (ทำให้ทั้งย่านเป็น "แอ่งสว่าง" ที่ดูดเส้นเข้า)
-      // 0 ต้น ×1.5 · 1 ต้น ×1.35 · 3 ต้น ×1.05 · 5 ต้น ×0.75 · 8+ ต้น ≈×0.3
-      const c = Math.max(lampCountNearGrid(lampGrid, mid, 60), p1 ? lampCountNearGrid(lampGrid, p1, 60) : 0, p2 ? lampCountNearGrid(lampGrid, p2, 60) : 0);
-      return Math.max(0.3, 1.5 - 0.15 * Math.min(c, 10));
+      // นิยามแสงให้ตรง "ตาเห็น": ไฟถนนส่องถึงจริง ~20-30 ม. → รัศมีนับ 28 ม. (เดิม 60 — ซอยมืดข้างซอยสว่างได้เครดิตฟรี
+      // ทำให้ตัวคูณเท่ากันแล้วระบบเลือกเส้นสั้นกว่าแทนเส้นที่มีไฟจริง)
+      // เฉลี่ยทั้ง 3 จุด (เดิม max จุดเดียว — ท่อนมืดเกือบทั้งท่อนแต่ปลายติดไฟถูกนับสว่างทั้งท่อน)
+      // ส่วนลดแบบ log ไม่ตัน (เดิมตันที่ 8 ต้น) — ซอยไฟแน่นกว่าชนะเสมอ: 0 ต้น ×1.5 · 1 ต้น ×1.15 · 3 ต้น ×0.8 · 7 ต้น ×0.45 · 13+ ต้น ×0.2
+      const pts = [mid, p1, p2].filter(Boolean);
+      const c = pts.reduce((s, q) => s + lampCountNearGrid(lampGrid, q, 28), 0) / pts.length;
+      return inb * Math.max(0.2, 1.5 - 0.35 * Math.log2(1 + c));
     }
-    const shd = (q) => q && (underCovered(q, covered, 14) || ptShaded(q[0], q[1], prep));
-    return (shd(mid) || shd(p1) || shd(p2)) ? 1 : 2.2;
+    // กลางวัน: นับร่มแบบ "เสียงข้างมาก" (≥2 ใน 3 จุด) — เดิมจุดเดียวร่มก็นับทั้งท่อน เส้นเลยซิกแซกไล่เก็บหย่อมเงา
+    // penalty ไม่ร่มลดจาก ×2.2 → ×1.45 — ยอมอ้อมเพื่อร่มได้ ≤45% ของระยะตรง ไม่พาอ้อมเป็นเขาวงกต
+    const shd = (q) => q && (underCovered(q, covered, 14) || ptShaded(q[0], q[1], prep, true));
+    const nsh = (shd(mid) ? 1 : 0) + (shd(p1) ? 1 : 0) + (shd(p2) ? 1 : 0);
+    if (lowSunG) return inb * (nsh >= 2 ? 1 : nsh === 1 ? 1.04 : 1.1); // แดดต่ำ: เกือบเป็นทางสั้นสุด
+    return inb * (nsh >= 2 ? 1 : nsh === 1 ? 1.25 : 1.45);
   };
-  // จุดเริ่ม/จบ = โหนดใกล้สุด (≤250 ม.)
-  let sk = null, ek = null, sd = 250, ed = 250;
+  // จุดเริ่ม/จบ = โหนดใกล้สุด (≤120 ม. — เดิม 250 ทำให้เกิดเส้นตรงเฉียงยาวพุ่งทะลุตึกเข้าหาหมุด)
+  let sk = null, ek = null, sd = 120, ed = 120;
   for (const [k, n] of nodes) {
     const d1 = haversine(start, n.pt); if (d1 < sd) { sd = d1; sk = k; }
     const d2 = haversine(end, n.pt); if (d2 < ed) { ed = d2; ek = k; }
@@ -977,6 +1053,8 @@ export default function MapView({ apiRef }) {
             for (const ring of rings) if (ring && ring.length >= 4) bl.push({ ring, h });
           }
           ctx.current.bldgs = bl;
+          // กราฟทางเท้าอาจสร้างเสร็จก่อนข้อมูลตึก → rebuild เพื่อตัด snap edge ที่ลัดทะลุตึกออก แล้วคิดเส้นใหม่
+          if (ctx.current.walkNetWays) { ctx.current.walkNet = buildGraph(ctx.current.walkNetWays, bl); ctx.current.refresh?.(ctx.current.lastOsm || null, false); }
         } catch (e) {}
       })();
 
@@ -984,7 +1062,8 @@ export default function MapView({ apiRef }) {
       // พร้อมเมื่อไหร่ → คำนวณเส้นทางที่ค้างอยู่ใหม่ทันที (กันกรณีผู้ใช้ค้นหาก่อนกราฟโหลดเสร็จ)
       fetchWalkNet(DEMO_BBOX).then((d) => {
         if (cancelled || !d) return;
-        ctx.current.walkNet = buildGraph(d.ways);
+        ctx.current.walkNetWays = d.ways; // เก็บ ways ดิบไว้ rebuild เมื่อข้อมูลตึกมาถึง (กรอง snap ทะลุตึกได้ครบ)
+        ctx.current.walkNet = buildGraph(d.ways, ctx.current.bldgs);
         ctx.current.refresh?.(ctx.current.lastOsm || null, false);
       }).catch(() => {});
       ctx.current.osmPromise = fetchOSM(DEMO_BBOX).then((osm) => {
@@ -1028,6 +1107,8 @@ export default function MapView({ apiRef }) {
         if (sky) routes.push(sky);
         const mr = mainRoadRoute(start, end);
         if (mr) routes.push(mr);
+        const nl = nightLampRoute(start, end); // 💡 เส้นไฟกลางคืน (โดนบูสต์เฉพาะโหมดกลางคืน — ดู scoreRoutes)
+        if (nl) routes.push(nl);
         c.baseRoutes = routes; c.lastStart = start; c.lastEnd = end; c.sName = sName; c.eName = eName; c.note = note; c.lastOsm = null;
         c.routeKey = key;
         // หมุดปักชัดเจน: วงกลมใหญ่ขอบขาว + หางปักลงจุด + ป้ายกำกับด้านบน (start=เขียว, end=แดง)
@@ -1043,9 +1124,12 @@ export default function MapView({ apiRef }) {
         // วาดหมุด+เส้นใหม่ทุกรอบ (เส้นจากกราฟเปลี่ยนรูปตามเวลา) · โชว์เฉพาะ 2 เส้นที่ถูกเลือก
         c.redrawRoutes = (cands) => {
           c.routeLayer.clearLayers();
-          // หมุด S/E เกาะปลายเส้นที่ถูกเลือกจริง → กลางวัน (Skywalk) จบทางเข้า BTS ฝั่ง Siam Center (เหนือ) · กลางคืน (เส้นไฟ) จบฝั่งสยามสแควร์ (ใต้)
+          // 📍 หมุด S/E ปักที่ "จุดที่ผู้ใช้ค้น" เสมอ — ไม่เกาะปลายเส้น (เส้นชนะแต่ละเวลาเริ่ม/จบต่างกัน หมุดจะกระโดดไปมา)
+          // ปลายเส้นจริงห่างหมุด >25 ม. → วาดเส้นประเชื่อมให้เห็นว่าเดินเข้า/ออกแนวเส้นทางอีกนิด
           const bc = (cands[c.best] && cands[c.best].coordinates) || [[start[0], start[1]], [end[0], end[1]]];
-          const sPt = bc[0], ePt = bc[bc.length - 1];
+          const sPt = c.lastStart || bc[0], ePt = c.lastEnd || bc[bc.length - 1];
+          const connectPin = (pin, pt) => { if (haversine(pin, pt) > 25) L.polyline([[pin[1], pin[0]], [pt[1], pt[0]]], { color: "#9db7e8", weight: 3, opacity: 0.7, dashArray: "3 7" }).addTo(c.routeLayer); };
+          connectPin(sPt, bc[0]); connectPin(ePt, bc[bc.length - 1]);
           L.marker([sPt[1], sPt[0]], { icon: pinIcon("S", "#16a34a", "จุดเริ่ม", "rgba(22,163,74,.35)"), zIndexOffset: 1000 }).bindPopup("จุดเริ่ม: " + sName).addTo(c.routeLayer);
           L.marker([ePt[1], ePt[0]], { icon: pinIcon("E", "#dc2626", "ปลายทาง", "rgba(220,38,38,.35)"), zIndexOffset: 1000 }).bindPopup("ปลายทาง: " + eName).addTo(c.routeLayer);
           c.polylines = cands.map((r) => L.polyline(r.coordinates.map(([lon, lat]) => [lat, lon]), { color: "#888", weight: 4, opacity: 0.6, dashArray: "6 6" }).addTo(c.routeLayer));
@@ -1063,27 +1147,12 @@ export default function MapView({ apiRef }) {
         // คำนวณ candidates + คะแนน + วาด — ใช้ร่วมกัน 3 ทาง: ตอบเร็ว (osm=null), เติม OSM แล้ว, และตอนเลื่อนเวลา
         c.refresh = (osm, fit) => {
           const cands = c.baseRoutes.map((r, i) => ({ ...r, index: i }));
-          // กลางคืน + ต้นทางเป็น MBK → เริ่มประตูระดับพื้น + บังคับแวะซอยไฟ (สยามสแควร์ซอย 3) ก่อนถึง BTS
-          const nightMBK = !!(timeWeights(c.routeHour).night && c.lastStart && haversine(c.lastStart, MBK_L2) < 150);
-          const gStart = nightMBK ? MBK_NIGHT_EXIT : c.lastStart;
-          let g = null;
-          if (c.walkNet) {
-            if (nightMBK) {
-              // เดินหลายท่อนต่อกัน: ประตู → จุดแวะไฟถนนล่าง → จุดแวะซอยไฟ → ปลายทาง → บังคับผ่านเสาไฟเสมอ
-              const pts = [gStart, ...NIGHT_VIAS, c.lastEnd];
-              let coords = null, ok = true;
-              for (let i = 0; i < pts.length - 1; i++) {
-                const seg = graphRoute(c.walkNet, pts[i], pts[i + 1], c.routeHour, c.lampGrid, c.bldgs, osm);
-                if (!seg) { ok = false; break; }
-                coords = coords ? coords.concat(seg.coordinates.slice(1)) : seg.coordinates.slice();
-              }
-              if (ok && coords) {
-                let distM = 0; for (let i = 1; i < coords.length; i++) distM += haversine(coords[i - 1], coords[i]);
-                g = { graphed: true, coordinates: coords, distance_m: Math.round(distM), duration_min: Math.max(1, Math.round(distM / 75)), steps: [] };
-              }
-            }
-            if (!g) g = graphRoute(c.walkNet, gStart, c.lastEnd, c.routeHour, c.lampGrid, c.bldgs, osm);
-          }
+          // ต้นทาง MBK ช่วง "ห้างปิด" (ก่อน 10:00 / หลัง 22:00) → เส้นกราฟเริ่มที่ประตูระดับพื้นเสมอ
+          // (เดิมเช็คแค่กลางคืน — 07:00-09:59 เลยเริ่ม "กลางห้าง" ทั้งที่ MBK ยังไม่เปิด)
+          const hhG = c.routeHour ?? new Date().getHours();
+          const mbkClosed = (hhG < 10 || hhG >= 22) && c.lastStart && haversine(c.lastStart, MBK_L2) < 150;
+          const gStart = mbkClosed ? MBK_NIGHT_EXIT : c.lastStart;
+          const g = c.walkNet ? graphRoute(c.walkNet, gStart, c.lastEnd, c.routeHour, c.lampGrid, c.bldgs, osm) : null;
           if (g) { g.index = cands.length; cands.push(g); }
           const scored = scoreRoutes(cands, osm || { ok: false, trees: [], green: [], toilets: [], cameras: [] }, c.problems, c.lamps, c.bldgs, c.routeHour);
           const picks = pickRoutes(scored);
@@ -1415,6 +1484,7 @@ export default function MapView({ apiRef }) {
                     </div>
                     {r.skywalk ? <div style={{ fontSize: 11.5, color: "var(--bdi-green)", marginTop: 3 }}>เดินใต้หลังคา/ทะลุห้างเกือบตลอดเส้น — หลบแดดได้</div> : null}
                     {r.mainroad ? <div style={{ fontSize: 11.5, color: "var(--bdi-text-dim)", marginTop: 3 }}>เดินเลียบพระราม 1 ไม่มุดซอย — % สว่างนับเฉพาะเสาไฟ กทม.</div> : null}
+                    {r.nightlamp ? <div style={{ fontSize: 11.5, color: "var(--bdi-green)", marginTop: 3 }}>💡 เลาะแนวเสาไฟ BMA หนาแน่น (~14 ต้นตลอดแนว) — ทางสว่าง ไม่เปลี่ยว ยอมอ้อมนิดเพื่อเดินใต้ไฟ</div> : null}
                     {r.graphed ? <div style={{ fontSize: 11.5, color: "var(--bdi-green)", marginTop: 3 }}>🧭 คำนวณจากโครงข่ายทางเท้าจริง — เลือกเดินช่วงที่{r.night ? "มีไฟถนน BMA" : "อยู่ในเงาตึก/ใต้หลังคา"}</div> : null}
                   </button>
                 );
