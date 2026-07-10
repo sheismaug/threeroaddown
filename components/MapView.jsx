@@ -1127,7 +1127,9 @@ export default function MapView({ apiRef }) {
           // 📍 หมุด S/E ปักที่ "จุดที่ผู้ใช้ค้น" เสมอ — ไม่เกาะปลายเส้น (เส้นชนะแต่ละเวลาเริ่ม/จบต่างกัน หมุดจะกระโดดไปมา)
           // ปลายเส้นจริงห่างหมุด >25 ม. → วาดเส้นประเชื่อมให้เห็นว่าเดินเข้า/ออกแนวเส้นทางอีกนิด
           const bc = (cands[c.best] && cands[c.best].coordinates) || [[start[0], start[1]], [end[0], end[1]]];
-          const sPt = c.lastStart || bc[0], ePt = c.lastEnd || bc[bc.length - 1];
+          // ปลายเส้นใกล้จุดค้น ≤60 ม. = ที่เดียวกัน (พิกัดแลนด์มาร์กหยาบกว่าเส้นที่วาดจบตรงทางเข้าจริง เช่นบันได BTS ของ Skywalk) → ปักที่ปลายเส้นซึ่งแม่นกว่า
+          const anchor = (searched, pt) => (!searched || haversine(searched, pt) <= 60) ? pt : searched;
+          const sPt = anchor(c.lastStart, bc[0]), ePt = anchor(c.lastEnd, bc[bc.length - 1]);
           const connectPin = (pin, pt) => { if (haversine(pin, pt) > 25) L.polyline([[pin[1], pin[0]], [pt[1], pt[0]]], { color: "#9db7e8", weight: 3, opacity: 0.7, dashArray: "3 7" }).addTo(c.routeLayer); };
           connectPin(sPt, bc[0]); connectPin(ePt, bc[bc.length - 1]);
           L.marker([sPt[1], sPt[0]], { icon: pinIcon("S", "#16a34a", "จุดเริ่ม", "rgba(22,163,74,.35)"), zIndexOffset: 1000 }).bindPopup("จุดเริ่ม: " + sName).addTo(c.routeLayer);
